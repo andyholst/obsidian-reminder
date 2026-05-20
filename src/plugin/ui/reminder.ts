@@ -1,17 +1,33 @@
 import type { ReadOnlyReference } from "model/ref";
-import type { DateTime } from "model/time";
+import type { Reminder } from "model/reminder";
+import type { DateTime, Later } from "model/time";
 import { App, Modal } from "obsidian";
 import ReminderView from "ui/Reminder.svelte";
-import type { Reminder } from "../../model/reminder";
-import type { Later } from "../../model/time";
+import { ReminderToastManager } from "./reminder-toast";
 const electron = window.require ? window.require("electron") : undefined;
 
 export class ReminderModal {
+  private toastManager: ReminderToastManager = new ReminderToastManager();
+
   constructor(
     private app: App,
     private useSystemNotification: ReadOnlyReference<boolean>,
     private laters: ReadOnlyReference<Array<Later>>,
+    private openNoteOnReminderClick: ReadOnlyReference<boolean>,
+    private showPopupWithSystemNotification: ReadOnlyReference<boolean>,
+    private focusDoneButtonOnPopup: ReadOnlyReference<boolean>,
+    private notificationPopupStyle: ReadOnlyReference<string>,
   ) {}
+
+  /** Unmounts every open toast (for plugin unload). */
+  destroy() {
+    this.toastManager.destroy();
+  }
+
+  /** Delegates to the toast manager; a no-op when in modal mode (no toasts exist). */
+  syncToasts(currentKeys: Set<string>) {
+    this.toastManager.sync(currentKeys);
+  }
 
   public show(
     reminder: Reminder,
@@ -19,6 +35,8 @@ export class ReminderModal {
     onDone: () => void,
     onMute: () => void,
     onOpenFile: () => void,
+    onPauseAllNotifications: () => void,
+    onMuteAll: () => void,
   ) {
     if (!this.isSystemNotification()) {
       this.showBuiltinReminder(
@@ -27,24 +45,74 @@ export class ReminderModal {
         onDone,
         onMute,
         onOpenFile,
+        onPauseAllNotifications,
+        onMuteAll,
       );
-    } else {
-      // Show system notification
-      const Notification = (electron as any).remote.Notification;
-      const n = new Notification({
-        title: "Obsidian Reminder",
-        body: reminder.title,
-      });
-      n.on("click", () => {
-        n.close();
+      return;
+    }
+
+    const showBothSurfaces = this.showPopupWithSystemNotification.value;
+    if (showBothSurfaces) {
+      // The popup is the single owner of the reminder's lifecycle in this
+      // mode, so the system notification must not also wire up mute/done
+      // actions -- otherwise both surfaces would fire onDone/onMute for the
+      // same reminder. It is shown as an alert only.
+      this.showBuiltinReminder(
+        reminder,
+        onRemindMeLater,
+        onDone,
+        onMute,
+        onOpenFile,
+        onPauseAllNotifications,
+        onMuteAll,
+      );
+    }
+    this.showSystemNotification(
+      reminder,
+      onRemindMeLater,
+      onDone,
+      onMute,
+      onOpenFile,
+      onPauseAllNotifications,
+      onMuteAll,
+      showBothSurfaces,
+    );
+  }
+
+  private showSystemNotification(
+    reminder: Reminder,
+    onRemindMeLater: (time: DateTime) => void,
+    onDone: () => void,
+    onMute: () => void,
+    onOpenFile: () => void,
+    onPauseAllNotifications: () => void,
+    onMuteAll: () => void,
+    alertOnly: boolean,
+  ) {
+    const Notification = (electron as any).remote.Notification;
+    const n = new Notification({
+      title: "Obsidian Reminder",
+      body: reminder.title,
+    });
+    n.on("click", () => {
+      n.close();
+      if (this.openNoteOnReminderClick.value) {
+        onOpenFile();
+        return;
+      }
+      if (!alertOnly) {
         this.showBuiltinReminder(
           reminder,
           onRemindMeLater,
           onDone,
           onMute,
           onOpenFile,
+          onPauseAllNotifications,
+          onMuteAll,
         );
-      });
+      }
+    });
+    if (!alertOnly) {
       n.on("close", () => {
         onMute();
       });
@@ -65,9 +133,9 @@ export class ReminderModal {
         });
         n.actions = actions as any;
       }
-
-      n.show();
     }
+
+    n.show();
   }
 
   private showBuiltinReminder(
@@ -76,7 +144,22 @@ export class ReminderModal {
     onDone: () => void,
     onCancel: () => void,
     onOpenFile: () => void,
+    onPauseAllNotifications: () => void,
+    onMuteAll: () => void,
   ) {
+    if (this.notificationPopupStyle.value === "toast") {
+      this.toastManager.show(
+        reminder,
+        this.laters.value,
+        onRemindMeLater,
+        onDone,
+        onCancel,
+        onOpenFile,
+        onPauseAllNotifications,
+        onMuteAll,
+      );
+      return;
+    }
     new NotificationModal(
       this.app,
       this.laters.value,
@@ -85,6 +168,9 @@ export class ReminderModal {
       onDone,
       onCancel,
       onOpenFile,
+      onPauseAllNotifications,
+      onMuteAll,
+      this.focusDoneButtonOnPopup.value,
     ).open();
   }
 
@@ -102,6 +188,16 @@ export class ReminderModal {
 
 class NotificationModal extends Modal {
   canceled: boolean = true;
+  // Set when the modal is closed via "Pause all notifications...". This
+  // takes precedence over `canceled` in `onClose()` so `onCancel` (which
+  // mutes the reminder) is skipped, letting the reminder re-fire once the
+  // pause ends.
+  private pausingAll: boolean = false;
+  // Set when the modal is closed via "Mute all reminders...". Like
+  // `pausingAll`, this takes precedence over `canceled` in `onClose()` so
+  // `onCancel` (single mute) is skipped -- muting all already covers this
+  // reminder, so the single mute would be redundant.
+  private mutingAll: boolean = false;
 
   constructor(
     app: App,
@@ -111,6 +207,9 @@ class NotificationModal extends Modal {
     private onDone: () => void,
     private onCancel: () => void,
     private onOpenFile: () => void,
+    private onPauseAllNotifications: () => void,
+    private onMuteAll: () => void,
+    private focusDoneButtonOnPopup: boolean,
   ) {
     super(app);
   }
@@ -126,6 +225,7 @@ class NotificationModal extends Modal {
       props: {
         reminder: this.reminder,
         laters: this.laters,
+        focusDone: this.focusDoneButtonOnPopup,
         onRemindMeLater: (time: DateTime) => {
           this.onRemindMeLater(time);
           this.canceled = false;
@@ -145,6 +245,16 @@ class NotificationModal extends Modal {
           this.canceled = true;
           this.close();
         },
+        onPauseAllNotifications: () => {
+          this.pausingAll = true;
+          this.onPauseAllNotifications();
+          this.close();
+        },
+        onMuteAll: () => {
+          this.mutingAll = true;
+          this.onMuteAll();
+          this.close();
+        },
       },
     });
   }
@@ -155,7 +265,13 @@ class NotificationModal extends Modal {
     this.reminder.beingDisplayed = false;
     const { contentEl } = this;
     contentEl.empty();
-    if (this.canceled) {
+    if (this.pausingAll) {
+      // Skip `onCancel` (mute): pausing suppresses notifications globally
+      // without muting this specific reminder.
+    } else if (this.mutingAll) {
+      // Skip `onCancel` (single mute): muting all already covers this
+      // reminder.
+    } else if (this.canceled) {
       this.onCancel();
     }
   }

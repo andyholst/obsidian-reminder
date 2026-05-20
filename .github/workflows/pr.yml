@@ -1,21 +1,33 @@
 name: CI
 
+# Also run on pushes to master: PR checks only validate a branch against the
+# base it was opened against, not the actual merge result, and nothing else
+# verifies master after a merge. That gap let #317 and #318 each pass PR CI
+# individually while their combined merge broke `tsc --noEmit` on master,
+# shipping broken code in release 1.2.0 (hotfixed in #320 / 1.2.1).
 on:
-  - pull_request
+  pull_request:
+  push:
+    branches: [master]
+
+env:
+  # The electron package is only used for its TypeScript types; skip the
+  # ~100MB binary download (electron's install.js honors this variable).
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "21"
+          node-version: "22"
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -25,19 +37,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check version consistency
+        run: node scripts/check-versions.mjs
+
       - name: Lint with ESLint
-        continue-on-error: true
+        # On pull_request, let this step pass through failures so reviewdog
+        # (below) reports them as inline PR review comments instead. On
+        # push (master), there is no PR to annotate, so let this step fail
+        # the workflow directly or ESLint errors would go unnoticed.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
-          npm run lint
+          npx eslint
 
       - name: Annotate ESLint results
-        uses: reviewdog/action-eslint@v1
-        if: always()
+        uses: reviewdog/action-eslint@556a3fdaf8b4201d4d74d406013386aa4f7dab96 # v1.34.0
+        # reviewdog's github-pr-review reporter only works on pull_request
+        # events; run it regardless of the eslint step's outcome so it still
+        # annotates when ESLint found problems, but skip it entirely on push.
+        if: always() && github.event_name == 'pull_request'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           reporter: github-pr-review
           filter_mode: nofilter
           fail_level: any
+
+      - name: Type check
+        run: |
+          npx tsc --noEmit --pretty
+          npx svelte-check
 
       - name: Test
         run: npm run test

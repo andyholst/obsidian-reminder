@@ -4,8 +4,16 @@ import type { DateTime } from "model/time";
 import { App, Platform } from "obsidian";
 import type { EditorPosition } from "obsidian";
 import type { ReminderFormatType } from "model/format";
+// obsidian's own type definitions dropped their (unused) re-export of the
+// legacy CodeMirror 5 types in 1.13, so import them directly here for the
+// Live Preview CM5 compatibility workaround below.
+import type * as CodeMirror from "codemirror";
 import { showDateTimeChooserModal } from "./date-chooser-modal";
 import { DateTimeChooserView } from "./datetime-chooser";
+import {
+  appendReminderOrConvert,
+  showReminderInsertionFailureNotice,
+} from "./util";
 
 export interface AutoCompletableEditor {
   getCursor(): EditorPosition;
@@ -25,6 +33,7 @@ export class AutoComplete {
     private trigger: ReadOnlyReference<string>,
     private timeStep: ReadOnlyReference<number>,
     private primaryFormat: ReadOnlyReference<ReminderFormatType>,
+    private convertNonTaskLines: ReadOnlyReference<boolean>,
   ) {}
 
   isTrigger(cmEditor: CodeMirror.Editor, changeObj: CodeMirror.EditorChange) {
@@ -95,8 +104,15 @@ export class AutoComplete {
     // append reminder to the line
     const format = this.primaryFormat.value.format;
     try {
-      const appended = format.appendReminder(line, value)?.insertedLine;
+      const appended = appendReminderOrConvert(
+        format,
+        line,
+        value,
+        undefined,
+        this.convertNonTaskLines.value,
+      )?.insertedLine;
       if (appended == null) {
+        showReminderInsertionFailureNotice();
         console.error(
           "Cannot append reminder time to the line: line=%s, date=%s",
           line,

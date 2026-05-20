@@ -4,8 +4,10 @@ import type {
   ReminderEdit,
   ReminderFormat,
   ReminderFormatConfig,
+  ReminderSpan,
 } from "./reminder-base";
 import { CompositeReminderFormat } from "./reminder-base";
+import { DataviewReminderFormat } from "./reminder-dataview";
 import { DefaultReminderFormat } from "./reminder-default";
 import { KanbanReminderFormat } from "./reminder-kanban-plugin";
 import { TasksPluginFormat } from "./reminder-tasks-plugin";
@@ -23,9 +25,9 @@ export class ReminderFormatType {
   ) {}
 }
 
-export type { ReminderFormat, ReminderEdit };
+export type { ReminderFormat, ReminderEdit, ReminderSpan };
 
-export function parseReminder(doc: MarkdownDocument): Array<Reminder> {
+export function parseReminder(doc: MarkdownDocument): Array<ReminderSpan> {
   return REMINDER_FORMAT.parse(doc);
 }
 
@@ -70,11 +72,19 @@ export const kanbanPluginReminderFormat = new ReminderFormatType(
   KanbanReminderFormat.instance,
   false,
 );
+export const dataviewReminderFormat = new ReminderFormatType(
+  "DataviewReminderFormat",
+  "Dataview format",
+  "[due:: 2021-09-08]",
+  DataviewReminderFormat.instance,
+  false,
+);
 
 export const ReminderFormatTypes = [
   reminderPluginReminderFormat,
   tasksPluginReminderFormat,
   kanbanPluginReminderFormat,
+  dataviewReminderFormat,
 ];
 
 export { MarkdownDocument };

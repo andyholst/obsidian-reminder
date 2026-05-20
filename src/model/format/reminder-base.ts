@@ -27,6 +27,15 @@ export interface ReminderModel {
    * this is used for decision of caret position after inserting reminder.
    */
   getEndOfTimeTextIndex(): number;
+
+  /**
+   * Compute the span `[start, end)` of the reminder time text, expressed as
+   * 0-based UTF-16 column indices within the todo *body* (i.e. before the
+   * todo header, such as `- [ ] `, is prepended). Callers that need the span
+   * within the full line must add `todo.getHeaderLength()` themselves (see
+   * `TodoBasedReminderFormat.parse`).
+   */
+  computeSpan(): { start: number; end: number };
 }
 
 export class ReminderFormatParameterKey<T> {
@@ -41,6 +50,16 @@ export class ReminderFormatParameterKey<T> {
     );
   static readonly removeTagsForTasksPlugin =
     new ReminderFormatParameterKey<boolean>("removeTagsForTasksPlugin", false);
+  static readonly useReminderTimeFallbackForTasksPlugin =
+    new ReminderFormatParameterKey<boolean>(
+      "useReminderTimeFallbackForTasksPlugin",
+      false,
+    );
+  static readonly dataviewReminderFieldName =
+    new ReminderFormatParameterKey<string>(
+      "dataviewReminderFieldName",
+      "reminder",
+    );
   static readonly linkDatesToDailyNotes =
     new ReminderFormatParameterKey<boolean>("linkDatesToDailyNotes", false);
   static readonly strictDateFormat = new ReminderFormatParameterKey<boolean>(
@@ -97,12 +116,23 @@ export class ReminderFormatConfig {
   }
 }
 
+/**
+ * A parsed reminder paired with the column span (within the full line text)
+ * of the reminder time text it was parsed from, e.g. `(@2021-09-14)`,
+ * `📅 2021-09-08`, or `@{2021-09-08} @@{12:15}`.
+ */
+export type ReminderSpan = {
+  reminder: Reminder;
+  columnStart: number;
+  columnEnd: number;
+};
+
 export interface ReminderFormat {
   setConfig(config: ReminderFormatConfig): void;
   /**
    * Parse given line if possible.
    */
-  parse(doc: MarkdownDocument): Array<Reminder> | null;
+  parse(doc: MarkdownDocument): Array<ReminderSpan> | null;
   /**
    * Modify the given line if possible.
    *
@@ -131,16 +161,16 @@ export interface ReminderFormat {
   ): ReminderInsertion | null;
 }
 
-export abstract class TodoBasedReminderFormat<E extends ReminderModel>
-  implements ReminderFormat
-{
+export abstract class TodoBasedReminderFormat<
+  E extends ReminderModel,
+> implements ReminderFormat {
   protected config: ReminderFormatConfig = new ReminderFormatConfig();
 
   setConfig(config: ReminderFormatConfig): void {
     this.config = config;
   }
 
-  parse(doc: MarkdownDocument): Reminder[] {
+  parse(doc: MarkdownDocument): ReminderSpan[] {
     return doc
       .getTodos()
       .map((todo) => {
@@ -156,15 +186,22 @@ export abstract class TodoBasedReminderFormat<E extends ReminderModel>
         if (time == null) {
           return null;
         }
-        return new Reminder(
+        const reminder = new Reminder(
           doc.file,
           title,
           time,
           todo.lineIndex,
           todo.isChecked(),
         );
+        const span = parsed.computeSpan();
+        const headerLength = todo.getHeaderLength();
+        return {
+          reminder,
+          columnStart: span.start + headerLength,
+          columnEnd: span.end + headerLength,
+        };
       })
-      .filter((reminder): reminder is Reminder => reminder != null);
+      .filter((span): span is ReminderSpan => span != null);
   }
 
   async modify(
@@ -275,8 +312,8 @@ export class CompositeReminderFormat implements ReminderFormat {
     this.syncConfig();
   }
 
-  parse(doc: MarkdownDocument): Reminder[] {
-    const reminders: Array<Reminder> = [];
+  parse(doc: MarkdownDocument): ReminderSpan[] {
+    const reminders: Array<ReminderSpan> = [];
     for (const format of this.formats) {
       const parsed = format.parse(doc);
       if (parsed == null) {

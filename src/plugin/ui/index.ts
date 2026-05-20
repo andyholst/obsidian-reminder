@@ -2,21 +2,31 @@ import type ReminderPlugin from "main";
 import type { ReadOnlyReference } from "model/ref";
 import type { DateTime } from "model/time";
 import type { Reminder } from "model/reminder";
+import type { EditorView } from "@codemirror/view";
 import {
   App,
   MarkdownView,
+  Notice,
   Platform,
   PluginSettingTab,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
 import { registerCommands } from "plugin/commands";
+import { showPauseDurationChooser } from "plugin/dnd";
 import { monkeyPatchConsole } from "plugin/obsidian-hack/obsidian-debug-mobile";
 import { VIEW_TYPE_REMINDER_LIST } from "./constants";
+import { DndStatusBar } from "./dnd-status-bar";
+import { OverdueStatusBar } from "./overdue-status-bar";
 import { ReminderListItemViewProxy } from "./reminder-list";
 import { AutoComplete } from "./autocomplete";
 import type { AutoCompletableEditor } from "./autocomplete";
 import { buildCodeMirrorPlugin } from "./editor-extension";
+import { createReminderPillExtension } from "./editor-reminder-display";
+import {
+  createReminderLineHighlightExtension,
+  highlightReminderLine,
+} from "./reminder-line-highlight";
 import { ReminderModal } from "./reminder";
 
 export class ReminderPluginUI {
@@ -24,32 +34,48 @@ export class ReminderPluginUI {
   private editDetector: EditDetector;
   private reminderModal: ReminderModal;
   private viewProxy: ReminderListItemViewProxy;
+  private dndStatusBar: DndStatusBar;
+  private overdueStatusBar: OverdueStatusBar;
   constructor(private plugin: ReminderPlugin) {
     this.viewProxy = new ReminderListItemViewProxy(
       this.plugin,
       // On select a reminder in the list
       (reminder) => {
-        if (reminder.muteNotification) {
+        if (
+          !this.plugin.settings.openNoteOnReminderClick.value &&
+          reminder.muteNotification
+        ) {
           this.showReminder(reminder);
           return;
         }
-        this.openReminderFile(reminder);
+        // Callback is synchronous; opening the file is fire-and-forget here.
+        void this.openReminderFile(reminder);
       },
     );
     this.autoComplete = new AutoComplete(
       plugin.settings.autoCompleteTrigger,
       plugin.settings.reminderTimeStep,
       plugin.settings.primaryFormat,
+      plugin.settings.convertNonTaskLines,
     );
     this.editDetector = new EditDetector(plugin.settings.editDetectionSec);
     this.reminderModal = new ReminderModal(
       plugin.app,
       plugin.settings.useSystemNotification,
       plugin.settings.laters,
+      plugin.settings.openNoteOnReminderClick,
+      plugin.settings.showPopupWithSystemNotification,
+      plugin.settings.focusDoneButtonOnPopup,
+      plugin.settings.notificationPopupStyle,
     );
+    this.dndStatusBar = new DndStatusBar(plugin);
+    this.overdueStatusBar = new OverdueStatusBar(plugin);
   }
 
   onload() {
+    this.dndStatusBar.onload();
+    this.overdueStatusBar.onload();
+
     // Reminder List
     this.plugin.registerView(VIEW_TYPE_REMINDER_LIST, (leaf: WorkspaceLeaf) => {
       return this.viewProxy.createView(leaf);
@@ -69,6 +95,20 @@ export class ReminderPluginUI {
           this.plugin.settings,
         ),
       );
+      this.plugin.registerEditorExtension(
+        createReminderPillExtension(this.plugin),
+      );
+      this.plugin.registerEditorExtension(
+        createReminderLineHighlightExtension(),
+      );
+      // Reconfiguring editor extensions is how CM6 signals every open
+      // editor's `StateField` that something changed (`tr.reconfigured`),
+      // which is what lets the pill extension re-check the toggle
+      // immediately instead of only on the editor's next edit/selection
+      // change.
+      this.plugin.settings.editorReminderDisplay.rawValue.onChanged(() => {
+        this.plugin.app.workspace.updateOptions();
+      });
     }
 
     registerCommands(this.plugin);
@@ -86,6 +126,7 @@ export class ReminderPluginUI {
 
   onunload() {
     this.detachReminderList();
+    this.reminderModal.destroy();
   }
 
   isEditing(): boolean {
@@ -94,14 +135,25 @@ export class ReminderPluginUI {
 
   invalidate() {
     this.viewProxy.invalidate();
+    this.overdueStatusBar.refresh();
+    this.reminderModal.syncToasts(
+      new Set(
+        this.plugin.reminders.reminders.map((reminder) => reminder.key()),
+      ),
+    );
   }
 
   reload(force: boolean = false) {
     this.viewProxy.reload(force);
+    this.overdueStatusBar.refresh();
   }
 
   showAutoComplete(editor: AutoCompletableEditor) {
     this.autoComplete.show(this.plugin.app, editor, this.plugin.reminders);
+  }
+
+  refreshDndStatusBar() {
+    this.dndStatusBar.refresh();
   }
 
   private showReminderModal(
@@ -110,6 +162,8 @@ export class ReminderPluginUI {
     onDone: () => void,
     onMute: () => void,
     onOpenFile: () => void,
+    onPauseAllNotifications: () => void,
+    onMuteAll: () => void,
   ) {
     this.reminderModal.show(
       reminder,
@@ -117,18 +171,27 @@ export class ReminderPluginUI {
       onDone,
       onMute,
       onOpenFile,
+      onPauseAllNotifications,
+      onMuteAll,
     );
   }
 
-  showReminderList() {
-    if (
-      this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_REMINDER_LIST).length
-    ) {
-      return;
+  async showReminderList() {
+    const workspace = this.plugin.app.workspace;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_REMINDER_LIST)[0];
+    if (leaf == null) {
+      const rightLeaf = workspace.getRightLeaf(false);
+      if (rightLeaf == null) {
+        return;
+      }
+      await rightLeaf.setViewState({
+        type: VIEW_TYPE_REMINDER_LIST,
+      });
+      leaf = rightLeaf;
     }
-    this.plugin.app.workspace.getRightLeaf(false)?.setViewState({
-      type: VIEW_TYPE_REMINDER_LIST,
-    });
+    // Without revealing the leaf, the view stays hidden when the right
+    // sidebar is collapsed or another view is on top of it.
+    await workspace.revealLeaf(leaf);
   }
 
   private detachReminderList() {
@@ -140,29 +203,47 @@ export class ReminderPluginUI {
   private async openReminderFile(reminder: Reminder) {
     const leaf = this.plugin.app.workspace.getLeaf(false);
 
-    console.log("Open reminder: ", reminder);
+    console.debug("Open reminder: ", reminder);
     const file = this.plugin.app.vault.getAbstractFileByPath(reminder.file);
     if (!(file instanceof TFile)) {
       console.error("Cannot open file because it isn't a TFile: %o", file);
       return;
     }
 
-    // Open the reminder file and select the reminder
+    // Open the reminder file and jump to the reminder's line.
     await leaf.openFile(file);
     if (!(leaf.view instanceof MarkdownView)) {
       return;
     }
-    const line = leaf.view.editor.getLine(reminder.rowNumber);
-    leaf.view.editor.setSelection(
+    const editor = leaf.view.editor;
+    const line = editor.getLine(reminder.rowNumber);
+    // Place the cursor on the line (no selection held) and scroll it into
+    // view, matching Obsidian's own search-result jump behavior rather than
+    // leaving the whole line selected (which risked the user accidentally
+    // overwriting it while typing).
+    editor.setCursor({ line: reminder.rowNumber, ch: 0 });
+    editor.scrollIntoView(
       {
-        line: reminder.rowNumber,
-        ch: 0,
+        from: { line: reminder.rowNumber, ch: 0 },
+        to: { line: reminder.rowNumber, ch: line.length },
       },
-      {
-        line: reminder.rowNumber,
-        ch: line.length,
-      },
+      true,
     );
+
+    // Highlight the line via the CM6 extension registered in `onload()`.
+    // `.cm` is not part of Obsidian's public `Editor` type (see
+    // `autocomplete.ts` for the same cast), and is only present on desktop,
+    // so this is a silent no-op otherwise.
+    const cm = (editor as any).cm as EditorView | undefined;
+    if (cm) {
+      const cmLine = cm.state.doc.line(reminder.rowNumber + 1);
+      cm.dispatch({
+        effects: highlightReminderLine.of({
+          from: cmLine.from,
+          to: cmLine.to,
+        }),
+      });
+    }
   }
 
   showReminder(reminder: Reminder) {
@@ -170,29 +251,74 @@ export class ReminderPluginUI {
     this.showReminderModal(
       reminder,
       (time) => {
-        console.info("Remind me later: time=%o", time);
+        console.debug("Remind me later: time=%o", time);
         reminder.time = time;
         reminder.muteNotification = false;
-        this.plugin.fileSystem.updateReminder(reminder, false);
-        this.plugin.data.save(true);
+        // Callback is synchronous; both calls are fire-and-forget here.
+        void this.plugin.fileSystem.updateReminder(reminder, false);
+        void this.plugin.data.save(true);
       },
       () => {
-        console.info("done");
+        console.debug("done");
         reminder.muteNotification = false;
-        this.plugin.fileSystem.updateReminder(reminder, true);
+        // Callback is synchronous; both calls are fire-and-forget here.
+        void this.plugin.fileSystem.updateReminder(reminder, true);
         this.plugin.reminders.removeReminder(reminder);
-        this.plugin.data.save(true);
+        void this.plugin.data.save(true);
       },
       () => {
-        console.info("Mute");
+        console.debug("Mute");
         reminder.muteNotification = true;
         this.reload(true);
+        void this.plugin.data.save(true);
       },
       () => {
-        console.info("Open");
-        this.openReminderFile(reminder);
+        console.debug("Open");
+        // Callback is synchronous; opening the file is fire-and-forget here.
+        void this.openReminderFile(reminder);
+      },
+      () => {
+        console.debug("Pause all notifications");
+        // Unlike Mute, this must not leave this specific reminder muted:
+        // pausing suppresses notifications globally without touching
+        // individual reminders, so it re-fires once the pause ends.
+        reminder.muteNotification = false;
+        showPauseDurationChooser(this.plugin);
+      },
+      () => {
+        console.debug("Mute all reminders");
+        // +1 for the currently displayed reminder: it was already flagged
+        // muted at display time (top of `showReminder()`), so
+        // `muteExpiredReminders()` never counts it as newly muted, but from
+        // the user's perspective this action is what mutes it.
+        const count =
+          this.plugin.reminders.muteExpiredReminders(
+            this.plugin.settings.reminderTime.value,
+          ) + 1;
+        // Already covered by muteExpiredReminders() in the common case, but
+        // set explicitly to stay correct even if this reminder's expiry
+        // check races with the bulk mute above.
+        reminder.muteNotification = true;
+        this.reload(true);
+        void this.plugin.data.save(true);
+        new Notice(`Muted ${count} reminder${count === 1 ? "" : "s"}`);
       },
     );
+  }
+
+  async rescheduleReminder(
+    reminder: Reminder,
+    newTime: DateTime,
+  ): Promise<void> {
+    console.info(
+      "Reschedule reminder: reminder=%o, newTime=%o",
+      reminder,
+      newTime,
+    );
+    reminder.time = newTime;
+    await this.plugin.fileSystem.updateReminder(reminder, false);
+    this.plugin.data.save(true);
+    this.reload(true);
   }
 }
 
@@ -226,7 +352,7 @@ export class ReminderSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
+  override display(): void {
     const { containerEl } = this;
 
     this.plugin.settings.settings.displayOn(containerEl);

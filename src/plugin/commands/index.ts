@@ -1,5 +1,8 @@
 import type ReminderPlugin from "main";
 import { MarkdownView } from "obsidian";
+import { muteAllReminders } from "./mute-all-reminders";
+import { pauseNotifications } from "./pause-notifications";
+import { resumeNotifications } from "./resume-notifications";
 import { scanReminders } from "./scan-reminders";
 import { showReminderList } from "./show-reminder-list";
 import { convertReminderTimeFormat } from "./convert-reminder-time-format";
@@ -70,6 +73,30 @@ export function registerCommands(plugin: ReminderPlugin) {
     name: "Set date display format",
     checkCallback: (checking: boolean) => {
       return setDateDisplayFormat(checking, plugin);
+    },
+  });
+
+  plugin.addCommand({
+    id: "pause-notifications",
+    name: "Pause reminder notifications",
+    checkCallback: (checking: boolean) => {
+      return pauseNotifications(checking, plugin);
+    },
+  });
+
+  plugin.addCommand({
+    id: "resume-notifications",
+    name: "Resume reminder notifications",
+    checkCallback: (checking: boolean) => {
+      return resumeNotifications(checking, plugin);
+    },
+  });
+
+  plugin.addCommand({
+    id: "mute-all-reminders",
+    name: "Mute all current reminders",
+    checkCallback: (checking: boolean) => {
+      return muteAllReminders(checking, plugin);
     },
   });
 }

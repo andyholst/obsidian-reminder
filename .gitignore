@@ -6,15 +6,23 @@
 node_modules
 
 # build
+dist/
 main.js
 *.js.map
 styles.css
 
 # obsidian
 data.json
-/deploy-targets.txt
+/.hotreload
 
 # misc.
 *.log
 /.serena
 /.roo
+
+# Claude Code local-only files
+.claude/settings.local.json
+.claude/hooks/.stop-check-state
+.claude/hooks/.manual-verify-state
+.claude/hooks/.docs-update-state
+.claude/worktrees/

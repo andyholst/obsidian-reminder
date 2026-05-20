@@ -12,9 +12,10 @@ if you want to view the source, please visit the github repository of this plugi
 */
 `;
 
+const watch = (process.argv[2] === 'watch');
 const prod = (process.argv[2] === 'production');
 
-esbuild.build({
+const ctx = await esbuild.context({
     banner: {
         js: banner,
     },
@@ -41,10 +42,19 @@ esbuild.build({
     // minify: prod ? true : false,
     sourcemap: prod ? false : 'inline',
     treeShaking: true,
-    outfile: 'main.js',
+    outfile: 'dist/main.js',
     minify: prod,
     plugins: [
         esbuildSvelte({
+            compilerOptions: {
+                // Keep the Svelte 4-style `new Component({ target, props })`
+                // constructor (plus `.$set()`/`.$destroy()`) working, since
+                // plugin/ui/*.ts instantiates Svelte components that way.
+                // Without this, Svelte 5 throws `component_api_invalid_new`
+                // at runtime (a regression tests can't catch, since no test
+                // imports a .svelte file - see .claude/rules/testing.md).
+                compatibility: { componentApi: 4 },
+            },
             preprocess: sveltePreprocess(),
         }),
         {
@@ -53,7 +63,7 @@ esbuild.build({
                 build.onEnd(() => {
                     const { outfile } = build.initialOptions;
                     const outcss = outfile.replace(/\.js$/, ".css");
-                    const fixcss = outfile.replace(/main\.js$/, "styles.css");
+                    const fixcss = outcss.replace(/\/main\.css$/, "/styles.css");
                     if (fs.existsSync(outcss)) {
                         fs.renameSync(outcss, fixcss);
                     }
@@ -61,10 +71,15 @@ esbuild.build({
             }
         }
     ]
-}).then((result) => {
-    if (process.env.NODE_ENV === 'development') {
-        result.watch();
-    }
-}).catch(() => {
-    process.exit(1);
 });
+
+try {
+    if (watch) {
+        await ctx.watch();
+    } else {
+        await ctx.rebuild();
+        await ctx.dispose();
+    }
+} catch {
+    process.exit(1);
+}

@@ -61,6 +61,13 @@ const kanbanSetting = new (class KanbanSetting {
 type KanbanSplitResult = {
   title: string;
   time?: DateTime;
+  /**
+   * Range of the matched date/time text in the original input, present
+   * whenever `time` is present. The matched text (e.g. `@@{2:30 PM}`) can be
+   * longer than its canonical re-formatted form (e.g. `@@{14:30}`), so
+   * consumers must not derive this range from the canonical form.
+   */
+  span?: { start: number; end: number };
 };
 
 export class KanbanDateTimeFormat {
@@ -68,19 +75,27 @@ export class KanbanDateTimeFormat {
     kanbanSetting,
   );
 
-  private dateRegExp: RegExp;
-  private timeRegExp: RegExp;
+  constructor(private setting: KanbanSettingType) {}
 
-  constructor(private setting: KanbanSettingType) {
-    let dateRegExpStr: string;
-    if (setting.linkDateToDailyNote) {
-      dateRegExpStr = `${escapeRegExpChars(this.setting.dateTrigger)}\\[\\[(?<date>.+?)\\]\\]`;
-    } else {
-      dateRegExpStr = `${escapeRegExpChars(this.setting.dateTrigger)}\\{(?<date>.+?)\\}`;
+  // The Kanban plugin's settings are not available yet when this module is
+  // loaded (`KanbanDateTimeFormat.instance` is created at import time) and
+  // can change at any time afterwards, so the regular expressions must be
+  // built from the current settings on every use.
+  private get dateRegExp(): RegExp {
+    if (this.setting.linkDateToDailyNote) {
+      return new RegExp(
+        `${escapeRegExpChars(this.setting.dateTrigger)}\\[\\[(?<date>.+?)\\]\\]`,
+      );
     }
-    const timeRegExpStr = `${escapeRegExpChars(this.setting.timeTrigger)}\\{(?<time>.+?)\\}`;
-    this.dateRegExp = new RegExp(dateRegExpStr);
-    this.timeRegExp = new RegExp(timeRegExpStr);
+    return new RegExp(
+      `${escapeRegExpChars(this.setting.dateTrigger)}\\{(?<date>.+?)\\}`,
+    );
+  }
+
+  private get timeRegExp(): RegExp {
+    return new RegExp(
+      `${escapeRegExpChars(this.setting.timeTrigger)}\\{(?<time>.+?)\\}`,
+    );
   }
 
   format(time: DateTime): string {
@@ -104,40 +119,78 @@ export class KanbanDateTimeFormat {
     let date: string;
     let time: string | undefined;
 
-    const dateMatch = this.dateRegExp.exec(text);
+    const dateRegExp = this.dateRegExp;
+    const dateMatch = dateRegExp.exec(text);
     if (dateMatch) {
       date = dateMatch.groups!["date"]!;
-      text = text.replace(this.dateRegExp, "");
+      text = text.replace(dateRegExp, "");
     } else {
       return { title: originalText };
     }
+    const dateStart = dateMatch.index;
+    const dateEnd = dateStart + dateMatch[0].length;
+    // Range of the matched date/time text in `originalText` coordinates.
+    let span = { start: dateStart, end: dateEnd };
 
-    const timeMatch = this.timeRegExp.exec(text);
+    const timeRegExp = this.timeRegExp;
+    const timeMatch = timeRegExp.exec(text);
     if (timeMatch) {
       time = timeMatch.groups!["time"]!;
-      text = text.replace(this.timeRegExp, "");
+      text = text.replace(timeRegExp, "");
+      // The time regex ran on the text with the date match removed, so map
+      // its index back to `originalText` coordinates: if it points at or
+      // after where the date started, the removed date segment was before
+      // it and its length must be added back.
+      const timeStart =
+        timeMatch.index >= dateStart
+          ? timeMatch.index + dateMatch[0].length
+          : timeMatch.index;
+      const timeEnd = timeStart + timeMatch[0].length;
+      span = {
+        start: Math.min(dateStart, timeStart),
+        end: Math.max(dateEnd, timeEnd),
+      };
     }
     const title = text.trim();
 
-    let parsedTime: DateTime;
-    const strict = strictDateFormat ?? true;
     if (time) {
-      parsedTime = new DateTime(
-        moment(
-          `${date} ${time}`,
-          `${this.setting.dateFormat} ${this.setting.timeFormat}`,
-          strict,
+      // Kanban's time picker can emit either 24-hour times (`HH:mm`) or
+      // 12-hour times (`h:mm A`/`hh:mm A`), and the format we assume here is
+      // read live from the Kanban plugin's settings, which may be stale,
+      // unreadable, or simply not match what the user actually typed.
+      // Non-strict moment parsing silently discards trailing text it can't
+      // match (e.g. it drops " PM" and quietly parses "2:30 PM" as 02:30
+      // AM), turning a format mismatch into a *wrong* reminder time instead
+      // of a missing one. So this path always parses strictly — ignoring
+      // the global strictDateFormat setting, which still governs the
+      // date-only path below — and tries a short list of candidate time
+      // formats, accepting the first one that parses strictly.
+      const candidateTimeFormats = [
+        this.setting.timeFormat,
+        ...["h:mm A", "hh:mm A", "HH:mm"].filter(
+          (format) => format !== this.setting.timeFormat,
         ),
-        true,
-      );
-    } else {
-      parsedTime = new DateTime(
-        moment(date, this.setting.dateFormat, strict),
-        false,
-      );
+      ];
+      for (const timeFormat of candidateTimeFormats) {
+        const candidate = moment(
+          `${date} ${time}`,
+          `${this.setting.dateFormat} ${timeFormat}`,
+          true,
+        );
+        if (candidate.isValid()) {
+          return { title, time: new DateTime(candidate, true), span };
+        }
+      }
+      return { title: originalText };
     }
+
+    const strict = strictDateFormat ?? true;
+    const parsedTime = new DateTime(
+      moment(date, this.setting.dateFormat, strict),
+      false,
+    );
     if (parsedTime.isValid()) {
-      return { title, time: parsedTime };
+      return { title, time: parsedTime, span };
     }
     return { title: originalText };
   }
@@ -155,12 +208,19 @@ export class KanbanReminderModel implements ReminderModel {
     if (splitted.time == null) {
       return null;
     }
-    return new KanbanReminderModel(splitted.title, splitted.time);
+    return new KanbanReminderModel(
+      splitted.title,
+      splitted.time,
+      splitted.span,
+    );
   }
 
   constructor(
     public title: string,
     public time: DateTime,
+    // Range of the matched date/time text in the parsed source line. Absent
+    // for models built by newReminder(), which have no source text.
+    private span?: { start: number; end: number },
   ) {}
 
   getTitle(): string {
@@ -176,6 +236,10 @@ export class KanbanReminderModel implements ReminderModel {
 
   setTime(time: DateTime): void {
     this.time = time;
+    // The stored span describes the original source line; after the time is
+    // replaced, the line becomes the canonical toMarkdown() output, so fall
+    // back to the canonical-length computation in computeSpan().
+    this.span = undefined;
   }
 
   setRawTime(): boolean {
@@ -184,6 +248,24 @@ export class KanbanReminderModel implements ReminderModel {
 
   getEndOfTimeTextIndex(): number {
     return this.toMarkdown().length;
+  }
+
+  computeSpan(): { start: number; end: number } {
+    // Prefer the range actually matched in the source line: re-formatting
+    // the parsed time can change its length (e.g. `@@{2:30 PM}` parses to a
+    // canonical `@@{14:30}`, 2 chars shorter), so a span derived from the
+    // canonical form would drift from the document text.
+    if (this.span) {
+      return this.span;
+    }
+    // Fallback for models without source text (newReminder(), or after
+    // setTime() replaced the time): the document text is the canonical
+    // toMarkdown() = `${title.trim()} ${formatted time}`, so the time text
+    // starts right after "title.trim() " (one separating space) and runs to
+    // the end of the markdown.
+    const start = this.title.trim().length + 1;
+    const end = start + KanbanDateTimeFormat.instance.format(this.time).length;
+    return { start, end };
   }
 
   toMarkdown(): string {

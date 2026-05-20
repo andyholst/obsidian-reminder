@@ -1,20 +1,19 @@
-import type { MarkdownDocument, Todo } from "model/format/markdown";
+import type { Todo } from "model/format/markdown";
 import { DATE_TIME_FORMATTER, DateTime } from "model/time";
 import moment from "moment";
-import type { Moment } from "moment";
-import { RRule } from "rrule";
-import {
-  ReminderFormatParameterKey,
-  TodoBasedReminderFormat,
-} from "./reminder-base";
-import type { ReminderEdit, ReminderModel } from "./reminder-base";
+import { ReminderFormatParameterKey } from "./reminder-base";
+import { TasksLikeReminderFormat, removeTags } from "./reminder-tasks-like";
+import type { TasksLikeReminderModel } from "./reminder-tasks-like";
 import { Symbol, Tokens, splitBySymbol } from "./splitter";
 
-function removeTags(text: string): string {
-  return text.replace(/#\w+/g, "");
-}
-export class TasksPluginReminderModel implements ReminderModel {
+export class TasksPluginReminderModel implements TasksLikeReminderModel {
   private static readonly dateFormat = "YYYY-MM-DD";
+  // The Tasks plugin itself only supports a date-only due date (📅 is
+  // documented/parsed as `YYYY-MM-DD`). This plugin extends the due-date
+  // symbol to optionally also carry a time (`YYYY-MM-DD HH:mm`), which is
+  // why parsing tries this strict datetime format first and falls back to
+  // the date-only format the Tasks plugin expects.
+  private static readonly dueDateTimeFormat = "YYYY-MM-DD HH:mm";
   private static readonly symbolDueDate = Symbol.ofChars([..."📅📆🗓"]);
   private static readonly symbolDoneDate = Symbol.ofChar("✅");
   private static readonly symbolRecurrence = Symbol.ofChar("🔁");
@@ -35,11 +34,13 @@ export class TasksPluginReminderModel implements ReminderModel {
     useCustomEmoji?: boolean,
     removeTags?: boolean,
     strictDateFormat?: boolean,
+    useDueDateFallback?: boolean,
   ): TasksPluginReminderModel {
     return new TasksPluginReminderModel(
       useCustomEmoji ?? false,
       removeTags ?? false,
       strictDateFormat ?? true,
+      useDueDateFallback ?? false,
       new Tokens(splitBySymbol(line, this.allSymbols)),
     );
   }
@@ -48,6 +49,7 @@ export class TasksPluginReminderModel implements ReminderModel {
     private useCustomEmoji: boolean,
     private removeTags: boolean,
     private strictDateFormat: boolean,
+    private useDueDateFallback: boolean,
     private tokens: Tokens,
   ) {}
 
@@ -59,13 +61,13 @@ export class TasksPluginReminderModel implements ReminderModel {
     return title;
   }
   getTime(): DateTime | null {
-    return this.getDate(this.getReminderSymbol());
+    return this.getDate(this.resolveReminderSymbol());
   }
   setTime(time: DateTime, insertAt?: number): void {
     if (this.useCustomEmoji) {
-      this.setDate(this.getReminderSymbol(), time, 1);
+      this.setDate(this.writeReminderSymbol(), time, 1);
     } else {
-      this.setDate(this.getReminderSymbol(), time, insertAt);
+      this.setDate(this.writeReminderSymbol(), time, insertAt);
     }
   }
   getDueDate(): DateTime | null {
@@ -75,10 +77,46 @@ export class TasksPluginReminderModel implements ReminderModel {
     this.setDate(TasksPluginReminderModel.symbolDueDate, time);
   }
   setRawTime(rawTime: string): boolean {
-    this.setDate(this.getReminderSymbol(), rawTime);
+    this.setDate(this.writeReminderSymbol(), rawTime);
     return true;
   }
-  private getReminderSymbol(): Symbol {
+
+  /**
+   * Symbol used to read the reminder time. Unlike `writeReminderSymbol()`,
+   * this may cascade through 📅/⏳/🛫 when the fallback setting is on, so
+   * reads and writes intentionally use different symbol-resolution rules
+   * (see design doc "Reminder-time resolution rule").
+   */
+  private resolveReminderSymbol(): Symbol {
+    if (!this.useCustomEmoji) {
+      return TasksPluginReminderModel.symbolDueDate;
+    }
+    if (!this.useDueDateFallback) {
+      return TasksPluginReminderModel.symbolReminder;
+    }
+    const chain = [
+      TasksPluginReminderModel.symbolReminder,
+      TasksPluginReminderModel.symbolDueDate,
+      TasksPluginReminderModel.symbolScheduled,
+      TasksPluginReminderModel.symbolStart,
+    ];
+    for (const symbol of chain) {
+      // Fallback is based on token presence, not parse validity: a
+      // malformed higher-priority token still blocks fallback to a
+      // lower-priority one.
+      if (this.tokens.getToken(symbol) != null) {
+        return symbol;
+      }
+    }
+    return TasksPluginReminderModel.symbolReminder;
+  }
+
+  /**
+   * Symbol used to write the reminder time (snooze). Always ⏰ in
+   * custom-emoji mode, independent of the fallback setting, so snoozing
+   * never clobbers 📅/⏳/🛫.
+   */
+  private writeReminderSymbol(): Symbol {
     if (this.useCustomEmoji) {
       return TasksPluginReminderModel.symbolReminder;
     } else {
@@ -88,15 +126,31 @@ export class TasksPluginReminderModel implements ReminderModel {
 
   getEndOfTimeTextIndex(): number {
     // get the end of the string index of due date or reminder date
-    let timeSymbol = TasksPluginReminderModel.symbolDueDate;
-    if (this.useCustomEmoji) {
-      timeSymbol = TasksPluginReminderModel.symbolReminder;
-    }
-    const token = this.tokens.rangeOfSymbol(timeSymbol);
+    const token = this.tokens.rangeOfSymbol(this.resolveReminderSymbol());
     if (token != null) {
       return token.end;
     }
     return this.toMarkdown().length;
+  }
+
+  computeSpan(): { start: number; end: number } {
+    const symbol = this.resolveReminderSymbol();
+    const range = this.tokens.rangeOfSymbol(symbol);
+    const token = this.tokens.getToken(symbol);
+    if (range == null || token == null) {
+      return { start: 0, end: 0 };
+    }
+    // `token.text` may carry a trailing separator space that actually
+    // belongs before the *next* token (see `splitBySymbol`); trim it so the
+    // span covers exactly the rendered time text (symbol + value) and
+    // nothing past it. Note this is not simply `range.end - 1`: when the
+    // reminder symbol is the last token in the line, there is no trailing
+    // separator to trim at all.
+    const trimmedTextLength = token.text.replace(/\s+$/, "").length;
+    return {
+      start: range.start,
+      end: range.start + token.symbol.length + trimmedTextLength,
+    };
   }
 
   toMarkdown(): string {
@@ -128,6 +182,7 @@ export class TasksPluginReminderModel implements ReminderModel {
       this.useCustomEmoji,
       this.removeTags,
       this.strictDateFormat,
+      this.useDueDateFallback,
     );
   }
 
@@ -138,17 +193,29 @@ export class TasksPluginReminderModel implements ReminderModel {
     }
     if (symbol === TasksPluginReminderModel.symbolReminder) {
       return DATE_TIME_FORMATTER.parse(dateText);
-    } else {
-      const date = moment(
-        dateText,
-        TasksPluginReminderModel.dateFormat,
-        this.strictDateFormat,
-      );
-      if (!date.isValid()) {
-        return null;
-      }
-      return new DateTime(date, false);
     }
+    if (symbol === TasksPluginReminderModel.symbolDueDate) {
+      // Optional time-part extension: try the strict datetime format
+      // first, and fall through to the date-only format below when it
+      // doesn't match.
+      const dateTime = moment(
+        dateText,
+        TasksPluginReminderModel.dueDateTimeFormat,
+        true,
+      );
+      if (dateTime.isValid()) {
+        return new DateTime(dateTime, true);
+      }
+    }
+    const date = moment(
+      dateText,
+      TasksPluginReminderModel.dateFormat,
+      this.strictDateFormat,
+    );
+    if (!date.isValid()) {
+      return null;
+    }
+    return new DateTime(date, false);
   }
 
   private setDate(
@@ -164,6 +231,14 @@ export class TasksPluginReminderModel implements ReminderModel {
     if (time instanceof DateTime) {
       if (symbol === TasksPluginReminderModel.symbolReminder) {
         timeStr = DATE_TIME_FORMATTER.toString(time);
+      } else if (
+        symbol === TasksPluginReminderModel.symbolDueDate &&
+        time.hasTimePart
+      ) {
+        // Opt-in extension: only write the time suffix when the caller
+        // explicitly gave us a time-bearing DateTime. Date-only due dates
+        // keep writing the plain Tasks-plugin-compatible format.
+        timeStr = time.format(TasksPluginReminderModel.dueDateTimeFormat);
       } else {
         timeStr = time.format(TasksPluginReminderModel.dateFormat);
       }
@@ -203,7 +278,7 @@ export class TasksPluginReminderModel implements ReminderModel {
   }
 }
 
-export class TasksPluginFormat extends TodoBasedReminderFormat<TasksPluginReminderModel> {
+export class TasksPluginFormat extends TasksLikeReminderFormat<TasksPluginReminderModel> {
   public static readonly instance = new TasksPluginFormat();
 
   parseReminder(todo: Todo): TasksPluginReminderModel | null {
@@ -212,9 +287,18 @@ export class TasksPluginFormat extends TodoBasedReminderFormat<TasksPluginRemind
       this.useCustomEmoji(),
       this.removeTagsEnabled(),
       this.isStrictDateFormat(),
+      this.useDueDateFallback(),
     );
-    if (this.useCustomEmoji() && parsed.getDueDate() == null) {
-      return null;
+    if (this.useCustomEmoji()) {
+      if (this.useDueDateFallback()) {
+        if (parsed.getTime() == null) {
+          return null;
+        }
+      } else {
+        if (parsed.getDueDate() == null) {
+          return null;
+        }
+      }
     }
     return parsed;
   }
@@ -231,101 +315,14 @@ export class TasksPluginFormat extends TodoBasedReminderFormat<TasksPluginRemind
     );
   }
 
-  override modifyReminder(
-    doc: MarkdownDocument,
-    todo: Todo,
-    parsed: TasksPluginReminderModel,
-    edit: ReminderEdit,
-  ): boolean {
-    if (!super.modifyReminder(doc, todo, parsed, edit)) {
-      return false;
-    }
-    if (edit.checked !== undefined) {
-      if (edit.checked) {
-        const recurrence = parsed.getRecurrence();
-        if (recurrence !== null) {
-          const nextReminderTodo = todo.clone()!;
-          const nextReminder = parsed.clone();
-          const dueDate = parsed.getDueDate();
-          if (dueDate == null) {
-            return false;
-          }
-
-          if (this.useCustomEmoji()) {
-            const time = parsed.getTime();
-            if (time == null) {
-              return false;
-            }
-            const nextTime: Date | undefined = this.nextDate(
-              recurrence,
-              time.moment(),
-            );
-            const nextDueDate: Date | undefined = this.nextDate(
-              recurrence,
-              dueDate.moment(),
-            );
-            if (nextTime == null || nextDueDate == null) {
-              return false;
-            }
-            nextReminder.setTime(new DateTime(moment(nextTime), true));
-            nextReminder.setDueDate(new DateTime(moment(nextDueDate), true));
-          } else {
-            const next: Date | undefined = this.nextDate(
-              recurrence,
-              dueDate.moment(),
-            );
-            if (next == null) {
-              return false;
-            }
-            const nextDueDate = new DateTime(moment(next), true);
-            nextReminder.setTime(nextDueDate);
-          }
-          nextReminderTodo.body = nextReminder.toMarkdown();
-          nextReminderTodo.setChecked(false);
-          doc.insertTodo(todo.lineIndex, nextReminderTodo);
-        }
-        parsed.setDoneDate(
-          this.config.getParameter(ReminderFormatParameterKey.now),
-        );
-      } else {
-        parsed.setDoneDate(undefined);
-      }
-    }
-    return true;
+  private useDueDateFallback() {
+    return this.config.getParameter(
+      ReminderFormatParameterKey.useReminderTimeFallbackForTasksPlugin,
+    );
   }
 
-  private nextDate(recurrence: string, dtStart: Moment): Date | undefined {
-    const rruleOptions = RRule.parseText(recurrence);
-    if (!rruleOptions) {
-      return undefined;
-    }
-
-    const today = this.config
-      .getParameter(ReminderFormatParameterKey.now)
-      .moment();
-    today.set("hour", dtStart.get("hour"));
-    today.set("minute", dtStart.get("minute"));
-    today.set("second", dtStart.get("second"));
-    today.set("millisecond", dtStart.get("millisecond"));
-    if (today.isAfter(dtStart)) {
-      dtStart = today;
-    }
-
-    // clone dtStart because dtStart will be modified by utc() call.
-    const base = dtStart.clone();
-
-    // process rrule
-    rruleOptions.dtstart = dtStart.utc(true).toDate();
-    const rrule = new RRule(rruleOptions);
-    const rdate = rrule.after(dtStart.toDate(), false);
-    if (rdate == null) {
-      return undefined;
-    }
-
-    // apply rrule to `base`
-    const diff = rdate.getTime() - rruleOptions.dtstart.getTime();
-    base.add(diff, "millisecond");
-    return base.toDate();
+  protected override usesSeparateReminderDate(): boolean {
+    return this.useCustomEmoji();
   }
 
   newReminder(
@@ -338,6 +335,7 @@ export class TasksPluginFormat extends TodoBasedReminderFormat<TasksPluginRemind
       this.useCustomEmoji(),
       this.removeTagsEnabled(),
       this.isStrictDateFormat(),
+      this.useDueDateFallback(),
     );
     parsed.setTime(time, insertAt);
     if (this.useCustomEmoji() && parsed.getDueDate() == null) {
