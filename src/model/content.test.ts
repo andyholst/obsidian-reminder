@@ -13,9 +13,9 @@
  * @see src/plugin/filesystem.ts — ReminderPluginFileSystem.updateReminder()
  */
 
+import moment from "moment";
 import { Content } from "./content";
 import { DateTime } from "./time";
-import moment from "moment";
 
 describe("Content", (): void => {
   /**
@@ -25,7 +25,10 @@ describe("Content", (): void => {
    */
   describe("getReminders", () => {
     test("extracts reminders from markdown with default format", () => {
-      const content = new Content("test.md", "- [ ] Task1 (@2021-09-14)\n- [ ] Task2 (@2021-09-15 10:00)\n");
+      const content = new Content(
+        "test.md",
+        "- [ ] Task1 (@2021-09-14)\n- [ ] Task2 (@2021-09-15 10:00)\n",
+      );
       const reminders = content.getReminders();
       expect(reminders.length).toBe(2);
       expect(reminders[0]!.title).toBe("Task1");
@@ -35,14 +38,20 @@ describe("Content", (): void => {
     });
 
     test("filters out done reminders by default", () => {
-      const content = new Content("test.md", "- [x] Done task (@2021-09-14)\n- [ ] Pending task (@2021-09-15)\n");
+      const content = new Content(
+        "test.md",
+        "- [x] Done task (@2021-09-14)\n- [ ] Pending task (@2021-09-15)\n",
+      );
       const reminders = content.getReminders();
       expect(reminders.length).toBe(1);
       expect(reminders[0]!.title).toBe("Pending task");
     });
 
     test("includes done reminders when doneOnly is false", () => {
-      const content = new Content("test.md", "- [x] Done task (@2021-09-14)\n- [ ] Pending task (@2021-09-15)\n");
+      const content = new Content(
+        "test.md",
+        "- [x] Done task (@2021-09-14)\n- [ ] Pending task (@2021-09-15)\n",
+      );
       const reminders = content.getReminders(false);
       expect(reminders.length).toBe(2);
     });
@@ -67,7 +76,10 @@ describe("Content", (): void => {
       expect(reminders.length).toBe(1);
 
       const newTime = new DateTime(moment("2021-09-15 10:00"), true);
-      await content.updateReminder(reminders[0]!, { time: newTime, checked: false });
+      await content.updateReminder(reminders[0]!, {
+        time: newTime,
+        checked: false,
+      });
 
       const result = content.getContent();
       expect(result).toContain("(@2021-09-15 10:00)");
@@ -79,18 +91,27 @@ describe("Content", (): void => {
       const reminders = content.getReminders();
 
       const newTime = new DateTime(moment("2021-09-14"), false);
-      await content.updateReminder(reminders[0]!, { time: newTime, checked: true });
+      await content.updateReminder(reminders[0]!, {
+        time: newTime,
+        checked: true,
+      });
 
       const result = content.getContent();
       expect(result).toContain("- [x]");
     });
 
     test("preserves task title when updating time", async () => {
-      const content = new Content("test.md", "- [ ] My important task (@2021-09-14)\n");
+      const content = new Content(
+        "test.md",
+        "- [ ] My important task (@2021-09-14)\n",
+      );
       const reminders = content.getReminders();
 
       const newTime = new DateTime(moment("2021-10-01 09:00"), true);
-      await content.updateReminder(reminders[0]!, { time: newTime, checked: false });
+      await content.updateReminder(reminders[0]!, {
+        time: newTime,
+        checked: false,
+      });
 
       const result = content.getContent();
       expect(result).toContain("My important task");
@@ -98,11 +119,17 @@ describe("Content", (): void => {
     });
 
     test("updates only the target reminder when multiple exist", async () => {
-      const content = new Content("test.md", "- [ ] Task1 (@2021-09-14)\n- [ ] Task2 (@2021-09-15)\n");
+      const content = new Content(
+        "test.md",
+        "- [ ] Task1 (@2021-09-14)\n- [ ] Task2 (@2021-09-15)\n",
+      );
       const reminders = content.getReminders();
 
       const newTime = new DateTime(moment("2021-09-20 12:00"), true);
-      await content.updateReminder(reminders[0]!, { time: newTime, checked: false });
+      await content.updateReminder(reminders[0]!, {
+        time: newTime,
+        checked: false,
+      });
 
       const result = content.getContent();
       expect(result).toContain("- [ ] Task1 (@2021-09-20 12:00)");

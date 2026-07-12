@@ -9,8 +9,17 @@
  * @see src/model/time.ts
  */
 
-import moment from "moment";
-import { DateTime, Time, Later, parseLater, parseLaters, inHours, inDays, inWeeks, tomorrow, nextWeek } from "./time";
+import {
+  DateTime,
+  Time,
+  inDays,
+  inHours,
+  inWeeks,
+  nextWeek,
+  parseLater,
+  parseLaters,
+  tomorrow,
+} from "./time";
 
 /**
  * DateTime class tests.

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  docker-compose:
+    runs-on: ubuntu-latest
+    # Bound the run so a stalled npm install fails fast instead of
+    # hanging for the full 6-hour default.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install dependencies first so they're cached in node_modules
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run lint via Docker Compose
+        run: make lint
+
+      - name: Run build via Docker Compose
+        run: make build
+
+      - name: Run test via Docker Compose
+        run: make test

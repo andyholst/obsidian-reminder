@@ -22,7 +22,6 @@ async function toggleCheck(
     });
   } else {
     const todo = content.getTodos().find((t) => t.lineIndex === lineNumber);
-    console.log(todo);
     if (!todo) {
       return;
     }
@@ -40,6 +39,8 @@ export function toggleChecklistStatus(
     return true;
   }
   if (view && view.file) {
-    toggleCheck(plugin, view.file, view.editor.getCursor().line);
+    // The command's check callback must return synchronously; the toggle
+    // itself is intentionally fire-and-forget here.
+    void toggleCheck(plugin, view.file, view.editor.getCursor().line);
   }
 }
