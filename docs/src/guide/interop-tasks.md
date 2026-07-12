@@ -19,8 +19,14 @@ When you [toggle checklist status](/guide/set-reminders.html#toggle-checklist-st
 - [x] Task 📅 2021-09-16 ✅ 2021-09-17
 ```
 
+The due date can also carry a time, as an extension beyond what the Tasks Plugin itself supports. In this case, the reminder fires at that time instead of the [default reminder time](/setting/#reminder-time).
+
+```markdown
+- [ ] Task 📅 2021-09-16 10:00
+```
+
 ::: warning Note
-- You cannot change this time format for interoperability with Tasks Plugin
+- You can't customize the due date format (`YYYY-MM-DD`, optionally followed by ` HH:mm`) for interoperability with Tasks Plugin
 - If you want to specify the reminder time separately from the due date in the Tasks Plugin, you can use [reminder emoji](#distinguish-due-date-and-reminder-date).
 :::
 
@@ -61,3 +67,36 @@ You can't insert any characters other than date/time between ⏰ and 📅.
 - (OK) `- [ ] Task ⏰ 2021-09-16 📅 2021-09-17`
 - (NG) `- [ ] Task ⏰ 2021-09-16 #Tag 📅 2021-09-17`
 :::
+
+### Fall back to due, scheduled, or start date
+
+With "Distinguish between reminder date and due date" enabled, a task
+without ⏰ is normally not treated as a reminder at all. If you enable
+[Fall back to due, scheduled, or start
+date](/setting/#fall-back-to-due-scheduled-or-start-date), the reminder
+date falls back through 📅 (due), then ⏳ (scheduled), then 🛫 (start), in
+that order, whenever ⏰ is missing.
+
+```markdown
+- [ ] Task ⏳ 2021-09-16
+```
+
+Here, the reminder fires on 2021-09-16 even though no ⏰ is present.
+
+::: tip
+When both 📅 and ⏳ are present, 📅 always wins — the fallback order
+mirrors the Tasks Plugin's own specificity (due date is more specific
+than scheduled date). To make a task remind on its scheduled date instead
+of its due date, set an explicit ⏰ equal to the scheduled date.
+:::
+
+Snoozing ("remind me later") always writes ⏰ and never overwrites
+📅/⏳/🛫, so the due/scheduled/start date on the line is preserved even
+after you snooze a fallback-triggered reminder.
+
+## Using the Tasks plugin's Dataview task format
+
+The Tasks plugin also supports writing task metadata as Dataview inline
+fields (`[due:: 2021-09-16]`) instead of emoji. This plugin reads that
+syntax through a separate format — see the [Dataview
+format](/guide/interop-dataview.html) guide.

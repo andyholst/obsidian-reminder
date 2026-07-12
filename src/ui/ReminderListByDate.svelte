@@ -1,14 +1,16 @@
 <script lang="typescript">
-  import moment from "moment";
-  import { DateTime } from "../model/time";
-  import type { Reminder } from "../model/reminder";
+  import type { DateTime } from "model/time";
+  import type { Reminder } from "model/reminder";
   import Markdown from "./Markdown.svelte";
 
   export let reminders: Array<Reminder>;
   export let onOpenReminder: (reminder: Reminder) => void = () => {};
-  export let timeToString = (time: DateTime) => time.format("HH:MM");
+  export let timeToString = (time: DateTime) => time.format("HH:mm");
   export let generateLink: (reminder: Reminder) => string = () => "";
-  export let onRescheduleContext: (event: MouseEvent | TouchEvent, reminder: Reminder) => void = () => {};
+  export let onRescheduleContext: (
+    event: MouseEvent | TouchEvent,
+    reminder: Reminder,
+  ) => void = () => {};
   export let isOverdue: boolean = false;
 
   // Long-press detection for non-overdue reminders
@@ -69,7 +71,7 @@
     <div class="reminder-list-item no-reminders">No reminders</div>
   {:else}
     <div>
-      {#each reminders as reminder}
+      {#each reminders as reminder (reminder.key())}
         <button
           class="reminder-list-item hover-highlight"
           class:is-overdue={isOverdue}
@@ -83,8 +85,8 @@
           on:click={(e) => handleClick(e, reminder)}
           on:contextmenu={(e) => handleContextMenu(e, reminder)}
           on:touchstart={(e) => handleTouchStart(e, reminder)}
-          on:touchend={(e) => handleTouchEnd()}
-          on:touchmove={(e) => handleTouchMove()}
+          on:touchend={() => handleTouchEnd()}
+          on:touchmove={() => handleTouchMove()}
         >
           <span class="reminder-time">
             {timeToString(reminder.time)}
@@ -126,7 +128,7 @@
   }
   .reminder-list-item:hover {
     color: var(--text-normal);
-    background-color: var(--background-secondary-alt);
+    background-color: var(--background-modifier-hover);
   }
   .reminder-list-item.is-overdue {
     color: var(--text-accent);
@@ -134,7 +136,7 @@
   .reminder-time {
     display: inline-block;
     font-size: 14px;
-    font-family: monospace, serif;
+    font-family: var(--font-monospace);
   }
   .reminder-title-container {
     display: inline-flex;

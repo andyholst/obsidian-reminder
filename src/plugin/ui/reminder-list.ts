@@ -1,8 +1,8 @@
 import { ItemView, Menu, Platform, TFile, View, WorkspaceLeaf } from "obsidian";
 import ReminderListView from "ui/ReminderList.svelte";
 import type ReminderPlugin from "main";
-import { Reminder, groupReminders } from "../../model/reminder";
-import { DateTime } from "../../model/time";
+import { Reminder, groupReminders } from "model/reminder";
+import { DateTime } from "model/time";
 import { VIEW_TYPE_REMINDER_LIST } from "./constants";
 import { showRescheduleModal } from "./reschedule-modal";
 
@@ -37,12 +37,15 @@ class ReminderListItemView extends ItemView {
         onOpenReminder: this.onOpenReminder,
         isMobile: Platform.isMobile,
         onReschedule: (reminder: Reminder, newTime: DateTime) => {
-          this.plugin.ui.rescheduleReminder(reminder, newTime);
+          void this.plugin.ui.rescheduleReminder(reminder, newTime);
         },
         onShowRescheduleModal: (reminder: Reminder) => {
-          this.showRescheduleModalForReminder(reminder);
+          void this.showRescheduleModalForReminder(reminder);
         },
-        onRescheduleContext: (event: MouseEvent | TouchEvent, reminder: Reminder) => {
+        onRescheduleContext: (
+          event: MouseEvent | TouchEvent,
+          reminder: Reminder,
+        ) => {
           this.showRescheduleContextMenu(event, reminder);
         },
         generateLink: (reminder: Reminder): string => {
@@ -63,47 +66,63 @@ class ReminderListItemView extends ItemView {
     });
   }
 
-  private showRescheduleContextMenu(event: MouseEvent | TouchEvent, reminder: Reminder) {
+  private showRescheduleContextMenu(
+    event: MouseEvent | TouchEvent,
+    reminder: Reminder,
+  ) {
     const menu = new Menu();
 
     // Get mouse coordinates from either MouseEvent or TouchEvent
-    const mouseEvent = "clientX" in event ? event : new MouseEvent("contextmenu", {
-      clientX: (event as TouchEvent).touches?.[0]?.clientX ?? 0,
-      clientY: (event as TouchEvent).touches?.[0]?.clientY ?? 0,
-      bubbles: true,
-    });
+    const mouseEvent =
+      "clientX" in event
+        ? event
+        : new MouseEvent("contextmenu", {
+            clientX: (event as TouchEvent).touches?.[0]?.clientX ?? 0,
+            clientY: (event as TouchEvent).touches?.[0]?.clientY ?? 0,
+            bubbles: true,
+          });
 
     menu.addItem((item) => {
-      item.setTitle("In 3 hours")
+      item
+        .setTitle("In 3 hours")
         .setIcon("clock")
         .onClick(() => {
-          const newTime = DateTime.now().add(3, "hours");
-          this.plugin.ui.rescheduleReminder(reminder, newTime);
+          void (async () => {
+            const newTime = DateTime.now().add(3, "hours");
+            await this.plugin.ui.rescheduleReminder(reminder, newTime);
+          })();
         });
     });
 
     menu.addItem((item) => {
-      item.setTitle("Tomorrow")
+      item
+        .setTitle("Tomorrow")
         .setIcon("calendar")
         .onClick(() => {
-          const newTime = DateTime.now().add(1, "days");
-          this.plugin.ui.rescheduleReminder(reminder, newTime);
+          void (async () => {
+            const newTime = DateTime.now().add(1, "days");
+            await this.plugin.ui.rescheduleReminder(reminder, newTime);
+          })();
         });
     });
 
     menu.addItem((item) => {
-      item.setTitle("Next week")
+      item
+        .setTitle("Next week")
         .setIcon("calendar")
         .onClick(() => {
-          const newTime = DateTime.now().add(1, "weeks");
-          this.plugin.ui.rescheduleReminder(reminder, newTime);
+          void (async () => {
+            const newTime = DateTime.now().add(1, "weeks");
+            await this.plugin.ui.rescheduleReminder(reminder, newTime);
+          })();
         });
     });
 
     menu.addSeparator();
 
     menu.addItem((item) => {
-      item.setTitle("Custom...")
+      item
+        .setTitle("Custom...")
         .setIcon("calendar-clock")
         .onClick(() => {
           this.showRescheduleModalForReminder(reminder);
@@ -121,7 +140,7 @@ class ReminderListItemView extends ItemView {
       reminder.time,
     )
       .then((newTime) => {
-        this.plugin.ui.rescheduleReminder(reminder, newTime);
+        void this.plugin.ui.rescheduleReminder(reminder, newTime);
       })
       .catch(() => {
         // User cancelled
@@ -194,8 +213,9 @@ export class ReminderListItemViewProxy {
       // reminder list view is already in workspace
       return;
     }
-    // Create new view
-    this.plugin.app.workspace.getRightLeaf(false)?.setViewState({
+    // Create new view. `openView()` has a synchronous `void` return type, so
+    // this is intentionally fire-and-forget.
+    void this.plugin.app.workspace.getRightLeaf(false)?.setViewState({
       type: VIEW_TYPE_REMINDER_LIST,
     });
   }

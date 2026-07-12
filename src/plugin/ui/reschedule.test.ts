@@ -72,7 +72,13 @@ describe("Reschedule Interaction Logic", (): void => {
 
     /** Verifies that replacing a reminder's time works correctly */
     test("Rescheduled time replaces old reminder time", () => {
-      const reminder = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
       const newTime = DateTime.parse("2021-10-01 14:00");
       reminder.time = newTime;
       expect(reminder.time.toString()).toBe("2021-10-01 14:00");
@@ -88,11 +94,29 @@ describe("Reschedule Interaction Logic", (): void => {
   describe("Reminder time update in Reminders collection", () => {
     test("Updating reminder time changes its position in sorted list", () => {
       const reminders = new Reminders(() => {});
-      reminders.reminderTime = { value: new Time(9, 0) } as any;
+      reminders.reminderTime = { value: Time.parse("09:00") } as any;
 
-      const r1 = new Reminder("test.md", "Task1", DateTime.parse("2021-09-14 10:00"), 0, false);
-      const r2 = new Reminder("test.md", "Task2", DateTime.parse("2021-09-15 10:00"), 1, false);
-      const r3 = new Reminder("test.md", "Task3", DateTime.parse("2021-09-16 10:00"), 2, false);
+      const r1 = new Reminder(
+        "test.md",
+        "Task1",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
+      const r2 = new Reminder(
+        "test.md",
+        "Task2",
+        DateTime.parse("2021-09-15 10:00"),
+        1,
+        false,
+      );
+      const r3 = new Reminder(
+        "test.md",
+        "Task3",
+        DateTime.parse("2021-09-16 10:00"),
+        2,
+        false,
+      );
 
       reminders.replaceFile("test.md", [r1, r2, r3]);
       expect(reminders.reminders[0]!.title).toBe("Task1");
@@ -100,7 +124,13 @@ describe("Reschedule Interaction Logic", (): void => {
       expect(reminders.reminders[2]!.title).toBe("Task3");
 
       // Reschedule Task1 to after Task3
-      const r1Rescheduled = new Reminder("test.md", "Task1", DateTime.parse("2021-09-20 10:00"), 0, false);
+      const r1Rescheduled = new Reminder(
+        "test.md",
+        "Task1",
+        DateTime.parse("2021-09-20 10:00"),
+        0,
+        false,
+      );
       reminders.replaceFile("test.md", [r1Rescheduled, r2, r3]);
 
       expect(reminders.reminders[0]!.title).toBe("Task2");
@@ -109,7 +139,13 @@ describe("Reschedule Interaction Logic", (): void => {
     });
 
     test("Reschedule preserves reminder properties (file, title, rowNumber, done, muteNotification)", () => {
-      const reminder = new Reminder("test.md", "My Task", DateTime.parse("2021-09-14 10:00"), 5, false);
+      const reminder = new Reminder(
+        "test.md",
+        "My Task",
+        DateTime.parse("2021-09-14 10:00"),
+        5,
+        false,
+      );
       reminder.muteNotification = true;
 
       const newTime = DateTime.parse("2021-09-20 14:00");
@@ -154,16 +190,15 @@ describe("Reschedule Interaction Logic", (): void => {
    */
   describe("Overdue reminder interaction", () => {
     test("Overdue: regular click triggers reschedule context menu (not open modal)", () => {
-      const now = DateTime.now();
-      const overdueTime = now.add(-2, "hours");
-      const reminder = new Reminder("test.md", "Overdue task", overdueTime, 0, false);
-
       // Simulate Svelte component handleClick with isOverdue=true
       const isOverdue = true;
       let rescheduleCalled = false;
       let openModalCalled = false;
       const handleClick = () => {
-        if (isOverdue) { rescheduleCalled = true; return; }
+        if (isOverdue) {
+          rescheduleCalled = true;
+          return;
+        }
         openModalCalled = true;
       };
 
@@ -174,13 +209,21 @@ describe("Reschedule Interaction Logic", (): void => {
 
     test("Overdue: right-click always shows reschedule menu", () => {
       let rescheduleCalled = false;
-      const handleContextMenu = () => { rescheduleCalled = true; };
+      const handleContextMenu = () => {
+        rescheduleCalled = true;
+      };
       handleContextMenu();
       expect(rescheduleCalled).toBe(true);
     });
 
     test("Overdue: can be rescheduled to future date", () => {
-      const overdue = new Reminder("test.md", "Overdue task", DateTime.parse("2020-01-01 10:00"), 0, false);
+      const overdue = new Reminder(
+        "test.md",
+        "Overdue task",
+        DateTime.parse("2020-01-01 10:00"),
+        0,
+        false,
+      );
       const future = DateTime.now().add(1, "days");
       overdue.time = future;
       expect(overdue.time.getTimeInMillis()).toBeGreaterThan(Date.now());
@@ -198,7 +241,10 @@ describe("Reschedule Interaction Logic", (): void => {
       let rescheduleCalled = false;
       let openModalCalled = false;
       const handleClick = () => {
-        if (isOverdue) { rescheduleCalled = true; return; }
+        if (isOverdue) {
+          rescheduleCalled = true;
+          return;
+        }
         openModalCalled = true;
       };
 
@@ -210,14 +256,18 @@ describe("Reschedule Interaction Logic", (): void => {
     test("Today: long-press shows reschedule menu", () => {
       const isOverdue = false;
       let rescheduleCalled = false;
-      const handleLongPress = () => { if (!isOverdue) rescheduleCalled = true; };
+      const handleLongPress = () => {
+        if (!isOverdue) rescheduleCalled = true;
+      };
       handleLongPress();
       expect(rescheduleCalled).toBe(true);
     });
 
     test("Today: right-click shows reschedule menu", () => {
       let rescheduleCalled = false;
-      const handleContextMenu = () => { rescheduleCalled = true; };
+      const handleContextMenu = () => {
+        rescheduleCalled = true;
+      };
       handleContextMenu();
       expect(rescheduleCalled).toBe(true);
     });
@@ -231,7 +281,10 @@ describe("Reschedule Interaction Logic", (): void => {
     test("Tomorrow: regular click opens reminder modal", () => {
       const isOverdue = false;
       let openModalCalled = false;
-      const handleClick = () => { if (isOverdue) return; openModalCalled = true; };
+      const handleClick = () => {
+        if (isOverdue) return;
+        openModalCalled = true;
+      };
       handleClick();
       expect(openModalCalled).toBe(true);
     });
@@ -239,7 +292,9 @@ describe("Reschedule Interaction Logic", (): void => {
     test("Tomorrow: long-press shows reschedule menu", () => {
       const isOverdue = false;
       let rescheduleCalled = false;
-      const handleLongPress = () => { if (!isOverdue) rescheduleCalled = true; };
+      const handleLongPress = () => {
+        if (!isOverdue) rescheduleCalled = true;
+      };
       handleLongPress();
       expect(rescheduleCalled).toBe(true);
     });
@@ -253,7 +308,10 @@ describe("Reschedule Interaction Logic", (): void => {
     test("Next week: regular click opens reminder modal", () => {
       const isOverdue = false;
       let openModalCalled = false;
-      const handleClick = () => { if (isOverdue) return; openModalCalled = true; };
+      const handleClick = () => {
+        if (isOverdue) return;
+        openModalCalled = true;
+      };
       handleClick();
       expect(openModalCalled).toBe(true);
     });
@@ -261,7 +319,9 @@ describe("Reschedule Interaction Logic", (): void => {
     test("Next week: long-press shows reschedule menu", () => {
       const isOverdue = false;
       let rescheduleCalled = false;
-      const handleLongPress = () => { if (!isOverdue) rescheduleCalled = true; };
+      const handleLongPress = () => {
+        if (!isOverdue) rescheduleCalled = true;
+      };
       handleLongPress();
       expect(rescheduleCalled).toBe(true);
     });
@@ -278,12 +338,20 @@ describe("Reschedule Interaction Logic", (): void => {
       let openModalCalled = false;
       let rescheduleCalled = false;
 
-      const handleClick = () => { if (isOverdue) { rescheduleCalled = true; return; } openModalCalled = true; };
+      const handleClick = () => {
+        if (isOverdue) {
+          rescheduleCalled = true;
+          return;
+        }
+        openModalCalled = true;
+      };
       handleClick();
       expect(openModalCalled).toBe(true);
       expect(rescheduleCalled).toBe(false);
 
-      const handleLongPress = () => { if (!isOverdue) rescheduleCalled = true; };
+      const handleLongPress = () => {
+        if (!isOverdue) rescheduleCalled = true;
+      };
       handleLongPress();
       expect(rescheduleCalled).toBe(true);
     });
@@ -293,11 +361,19 @@ describe("Reschedule Interaction Logic", (): void => {
       let openModalCalled = false;
       let rescheduleCalled = false;
 
-      const handleClick = () => { if (isOverdue) { rescheduleCalled = true; return; } openModalCalled = true; };
+      const handleClick = () => {
+        if (isOverdue) {
+          rescheduleCalled = true;
+          return;
+        }
+        openModalCalled = true;
+      };
       handleClick();
       expect(openModalCalled).toBe(true);
 
-      const handleLongPress = () => { if (!isOverdue) rescheduleCalled = true; };
+      const handleLongPress = () => {
+        if (!isOverdue) rescheduleCalled = true;
+      };
       handleLongPress();
       expect(rescheduleCalled).toBe(true);
     });
@@ -308,14 +384,26 @@ describe("Reschedule Interaction Logic", (): void => {
    */
   describe("Edge cases", () => {
     test("Reschedule to same time doesn't break", () => {
-      const reminder = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
       const sameTime = DateTime.parse("2021-09-14 10:00");
       reminder.time = sameTime;
       expect(reminder.time.equals(sameTime)).toBe(true);
     });
 
     test("Reschedule with date-only reminder to date+time", () => {
-      const reminder = new Reminder("test.md", "Task", DateTime.parse("2021-09-14"), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14"),
+        0,
+        false,
+      );
       expect(reminder.time.hasTimePart).toBe(false);
 
       const newTime = new DateTime(moment().add(3, "hours"), true);
@@ -324,7 +412,13 @@ describe("Reschedule Interaction Logic", (): void => {
     });
 
     test("Reschedule with date+time reminder to date-only", () => {
-      const reminder = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
       expect(reminder.time.hasTimePart).toBe(true);
 
       const newTime = DateTime.parse("2021-10-01");
@@ -333,7 +427,13 @@ describe("Reschedule Interaction Logic", (): void => {
     });
 
     test("Reminder key changes after reschedule (used for deduplication)", () => {
-      const reminder = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
       const oldKey = reminder.key();
       reminder.time = DateTime.parse("2021-10-01 14:00");
       const newKey = reminder.key();
@@ -341,8 +441,20 @@ describe("Reschedule Interaction Logic", (): void => {
     });
 
     test("Reminder equals returns false after reschedule", () => {
-      const r1 = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
-      const r2 = new Reminder("test.md", "Task", DateTime.parse("2021-09-14 10:00"), 0, false);
+      const r1 = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
+      const r2 = new Reminder(
+        "test.md",
+        "Task",
+        DateTime.parse("2021-09-14 10:00"),
+        0,
+        false,
+      );
       expect(r1.equals(r2)).toBe(true);
 
       r2.time = DateTime.parse("2021-10-01 14:00");
@@ -355,10 +467,15 @@ describe("Reschedule Interaction Logic", (): void => {
       let timer: ReturnType<typeof setTimeout> | null = null;
 
       // touchstart: start timer
-      timer = setTimeout(() => { longPressFired = true; }, 500);
+      timer = setTimeout(() => {
+        longPressFired = true;
+      }, 500);
 
       // touchmove: cancel timer
-      if (timer) { clearTimeout(timer); timer = null; }
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
 
       expect(longPressFired).toBe(false);
     });
@@ -369,7 +486,10 @@ describe("Reschedule Interaction Logic", (): void => {
       let openModalCalled = false;
 
       const handleClick = () => {
-        if (longPressTriggered) { longPressTriggered = false; return; }
+        if (longPressTriggered) {
+          longPressTriggered = false;
+          return;
+        }
         openModalCalled = true;
       };
 

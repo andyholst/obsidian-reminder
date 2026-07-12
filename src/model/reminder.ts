@@ -26,6 +26,17 @@ export class Reminder {
     return this.file + this.title + this.time.toString();
   }
 
+  /**
+   * Checks whether this reminder's time has already passed at `nowMillis`.
+   * A date-only reminder falls back to `defaultTime` (the "Reminder Time"
+   * setting) for its time part. This is the single expiry predicate shared
+   * by the notification flow (`Reminders.getExpiredReminders()`) and the
+   * "Overdue" grouping (`groupReminders()`).
+   */
+  isExpired(nowMillis: number, defaultTime?: Time): boolean {
+    return this.time.getTimeInMillis(defaultTime) <= nowMillis;
+  }
+
   equals(reminder: Reminder) {
     return (
       this.rowNumber === reminder.rowNumber &&
@@ -36,8 +47,7 @@ export class Reminder {
   }
 
   public getFileName(): string {
-    const p = this.file.split(/[/\\]/);
-    return p[p.length - 1]!.replace(/^(.*?)(\..+)?$/, "$1");
+    return Reminder.extractFileName(this.file);
   }
 
   static extractFileName(path: string) {
@@ -58,13 +68,33 @@ export class Reminders {
     const result: Array<Reminder> = [];
     for (let i = 0; i < this.reminders.length; i++) {
       const reminder = this.reminders[i]!;
-      if (reminder.time.getTimeInMillis(defaultTime) <= now) {
+      if (reminder.isExpired(now, defaultTime)) {
         result.push(reminder);
       } else {
         break;
       }
     }
     return result;
+  }
+
+  /**
+   * Mutes every currently expired reminder (bulk mute, #220), so the
+   * notification storm after a long absence can be stopped in one action.
+   * Mirrors the single-reminder mute path: it only flips `muteNotification`
+   * and does not call `onChange()`, leaving UI reload to the caller.
+   *
+   * @returns the number of reminders that were newly muted (already-muted
+   * expired reminders don't count).
+   */
+  public muteExpiredReminders(defaultTime: Time): number {
+    let count = 0;
+    for (const reminder of this.getExpiredReminders(defaultTime)) {
+      if (!reminder.muteNotification) {
+        reminder.muteNotification = true;
+        count++;
+      }
+    }
+    return count;
   }
 
   public byDate(date: DateTime) {
@@ -101,27 +131,21 @@ export class Reminders {
   }
 
   public replaceFile(filePath: string, reminders: Array<Reminder>): boolean {
-    // migrate notificationVisible property
+    // migrate muteNotification property
     const oldReminders = this.fileToReminders.get(filePath);
     if (oldReminders) {
       if (this.equals(oldReminders, reminders)) {
         return false;
       }
-      const reminderToNotificationVisible = new Map<string, boolean>();
+      const keyToMuteNotification = new Map<string, boolean>();
       for (const reminder of oldReminders) {
-        reminderToNotificationVisible.set(
-          reminder.key(),
-          reminder.muteNotification,
-        );
+        keyToMuteNotification.set(reminder.key(), reminder.muteNotification);
       }
       for (const reminder of reminders) {
-        const visible = reminderToNotificationVisible.get(reminder.key());
-        reminderToNotificationVisible.set(
-          reminder.key(),
-          reminder.muteNotification,
-        );
-        if (visible !== undefined) {
-          reminder.muteNotification = visible;
+        const mute = keyToMuteNotification.get(reminder.key());
+        keyToMuteNotification.set(reminder.key(), reminder.muteNotification);
+        if (mute !== undefined) {
+          reminder.muteNotification = mute;
         }
       }
     }
@@ -135,25 +159,14 @@ export class Reminders {
     if (r1.length !== r2.length) {
       return false;
     }
-    this.sort(r1);
-    this.sort(r2);
-    for (const i in r1) {
-      const reminder1 = r1[i];
-      const reminder2 = r2[i];
-      if (reminder1 == null && reminder2 != null) {
-        return false;
-      }
-      if (reminder2 == null && reminder1 != null) {
-        return false;
-      }
-      if (reminder1 == null && reminder2 == null) {
-        continue;
-      }
-      if (!reminder1!.equals(reminder2!)) {
-        return false;
-      }
-    }
-    return true;
+    // Sort copies so we don't mutate the arrays passed in (r1 may be the
+    // array stored inside fileToReminders, and an equality check must not
+    // change stored state).
+    const sorted1 = [...r1];
+    const sorted2 = [...r2];
+    this.sort(sorted1);
+    this.sort(sorted2);
+    return sorted1.every((a, i) => a.equals(sorted2[i]!));
   }
 
   private sortReminders() {
@@ -305,6 +318,7 @@ export function groupReminders(
   format: DateDisplayFormat,
 ): Array<GroupedReminder> {
   const now = DateTime.now();
+  const nowMillis = now.getTimeInMillis();
   const result: Array<GroupedReminder> = [];
   let currentReminders: Array<Reminder> = [];
   const overdueReminders: Array<Reminder> = [];
@@ -312,7 +326,12 @@ export function groupReminders(
   let previousGroup: Group = generateGroup(now, now, reminderTime, format);
   for (let i = 0; i < sortedReminders.length; i++) {
     const r = sortedReminders[i]!;
-    if (r.muteNotification) {
+    // The Overdue group must reflect actual time, not just mute state:
+    // `muteNotification` is only set by the notification flow, so with
+    // notifications disabled (or at startup, before the first notification
+    // fires) it never gets set. Use the same expiry predicate as
+    // `Reminders.getExpiredReminders()`.
+    if (r.muteNotification || r.isExpired(nowMillis, reminderTime)) {
       overdueReminders.push(r);
       continue;
     }
@@ -330,13 +349,20 @@ export function groupReminders(
     result.push(new GroupedReminder(previousGroup, currentReminders));
   }
   if (overdueReminders.length > 0) {
-    const overdueGroup: Group = new Group("Overdue", (time) =>
-      time.format(format.timeFormat, reminderTime),
-    );
+    const overdueGroup: Group = new Group("Overdue", (time) => {
+      // Overdue reminders can be from a previous day, so a time-only label
+      // like "09:00" would be ambiguous about which day it refers to.
+      // Show the date only (no time) for previous days: once a reminder is
+      // days overdue the exact time matters little, and with the default
+      // formats the date label has the same width as the time label, keeping
+      // the titles within the group aligned.
+      if (time.toYYYYMMDD(reminderTime) === now.toYYYYMMDD(reminderTime)) {
+        return time.format(format.timeFormat, reminderTime);
+      }
+      return time.format(format.monthDayFormat, reminderTime);
+    });
     overdueGroup.isOverdue = true;
     result.splice(0, 0, new GroupedReminder(overdueGroup, overdueReminders));
-    console.log(overdueGroup);
-    console.log(result);
   }
   return result;
 }

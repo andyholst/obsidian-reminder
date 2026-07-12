@@ -15,7 +15,7 @@ export class Content {
   }
 
   public getReminders(doneOnly: boolean = true): Array<Reminder> {
-    const reminders = parseReminder(this.doc);
+    const reminders = parseReminder(this.doc).map((span) => span.reminder);
     if (!doneOnly) {
       return reminders;
     }
@@ -45,7 +45,7 @@ export class Content {
   private async modifyReminderLine(reminder: Reminder, edit: ReminderTodoEdit) {
     const modified = await modifyReminder(this.doc, reminder, edit);
     if (modified) {
-      console.info("Reminder was updated: reminder=%o", reminder);
+      console.debug("Reminder was updated: reminder=%o", reminder);
     } else {
       console.warn(
         "Cannot modify reminder because it's not a reminder todo: reminder=%o",

@@ -1,0 +1,48 @@
+# Local/dev CI runner replacing the old Dagger pipeline.
+#
+# Volumes (the key fix from the previous slow Dagger runs):
+#   - node_modules : bind-mounted from the host, where deps are already
+#                    installed. This persists across runs (no cold `npm
+#                    install` on every call) and avoids an empty named volume
+#                    shadowing the installed packages.
+#   - app-npm-cache: named volume for the npm registry tarball cache (~/.npm),
+#                    which speeds up any `npm install` that does run.
+#   - dist         : bind-mounted host dir so the built plugin lands in ./dist.
+#
+# The repo root is bind-mounted read-write into /workspace.
+#
+# NOTE: `tty: false` is set, but the underlying nerdctl still injects --tty;
+# the Makefile wraps `docker compose run` in `script -qec` to provide a
+# pseudo-TTY, which is required for non-interactive execution here.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+    working_dir: /workspace
+    tty: false
+    volumes:
+      - ..:/workspace:rw
+      - ../node_modules:/workspace/node_modules
+      - app-npm-cache:/root/.npm
+      - ../dist:/workspace/dist
+    environment:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+  # `docker compose run --rm build` -> npm run build
+  build:
+    extends: app
+    command: ["npm", "run", "build"]
+
+  # `docker compose run --rm test` -> jest (no coverage, matches CI)
+  test:
+    extends: app
+    command: ["npm", "run", "test", "--", "--no-coverage"]
+
+  # `docker compose run --rm lint` -> eslint + tsc --noEmit + svelte-check
+  lint:
+    extends: app
+    command: ["npm", "run", "lint"]
+
+volumes:
+  app-npm-cache:

@@ -1,13 +1,25 @@
-import type ReminderPlugin from "main";
 import { Reference } from "model/ref";
 import { Reminder, Reminders } from "model/reminder";
 import { DateTime } from "model/time";
 import { Settings, TAG_RESCAN } from "plugin/settings";
+import type { SettingModel } from "plugin/settings/helper";
 
 interface ReminderData {
   title: string;
   time: string;
   rowNumber: number;
+  muted?: boolean;
+}
+
+/**
+ * The minimal persistence surface `PluginData` needs. This matches the
+ * signatures of Obsidian's `Plugin.loadData()`/`Plugin.saveData()`, so a
+ * concrete `Plugin` instance is assignable here structurally without
+ * `PluginData` depending on the `obsidian` module.
+ */
+export interface DataStore {
+  loadData(): Promise<unknown>;
+  saveData(data: unknown): Promise<void>;
 }
 
 export class PluginData {
@@ -15,14 +27,23 @@ export class PluginData {
   changed: boolean = false;
   public scanned: Reference<boolean> = new Reference(false);
   public debug: Reference<boolean> = new Reference(false);
+  // Do-not-disturb end time, or `null` while do-not-disturb is inactive.
+  // Transient state (not a setting): not exposed in the settings tab, but
+  // still persisted so a pause survives an Obsidian restart.
+  public dndUntil: Reference<DateTime | null> = new Reference<DateTime | null>(
+    null,
+  );
   private readonly _settings = new Settings();
 
   constructor(
-    private plugin: ReminderPlugin,
+    private store: DataStore,
     private reminders: Reminders,
   ) {
     this.settings.forEach((setting) => {
-      setting.rawValue.onChanged(() => {
+      // `setting` is type-erased to `SettingModelBase` here; `rawValue.onChanged`
+      // only registers a listener and doesn't use the raw value type, so
+      // widening to `SettingModel<unknown, unknown>` to reach `rawValue` is safe.
+      (setting as SettingModel<unknown, unknown>).rawValue.onChanged(() => {
         if (this.restoring) {
           return;
         }
@@ -36,7 +57,18 @@ export class PluginData {
 
   async load() {
     console.debug("Load reminder plugin data");
-    const data = await this.plugin.loadData();
+    // `loadData()` returns data of unknown shape (it's whatever was
+    // previously passed to `saveData()`), so this cast is a minimal, trusted
+    // bridge between the untyped persistence API and our persisted data shape.
+    const data = (await this.store.loadData()) as
+      | {
+          scanned: boolean;
+          debug?: boolean;
+          dndUntil?: number | null;
+          settings?: Record<string, unknown>;
+          reminders?: Record<string, Array<ReminderData>>;
+        }
+      | undefined;
     if (!data) {
       this.scanned.value = false;
       return;
@@ -45,30 +77,33 @@ export class PluginData {
     if (data.debug != null) {
       this.debug.value = data.debug;
     }
+    this.dndUntil.value =
+      data.dndUntil != null ? DateTime.ofEpochMillis(data.dndUntil) : null;
 
-    const loadedSettings = data.settings;
     this.settings.forEach((setting) => {
-      setting.load(loadedSettings);
+      setting.load(data.settings);
     });
 
-    if (data.reminders) {
-      Object.keys(data.reminders).forEach((filePath) => {
-        const remindersInFile = data.reminders[filePath] as Array<ReminderData>;
+    const remindersData = data.reminders;
+    if (remindersData) {
+      Object.keys(remindersData).forEach((filePath) => {
+        const remindersInFile = remindersData[filePath];
         if (!remindersInFile) {
           return;
         }
         this.reminders.replaceFile(
           filePath,
-          remindersInFile.map(
-            (d) =>
-              new Reminder(
-                filePath,
-                d.title,
-                DateTime.parse(d.time),
-                d.rowNumber,
-                false,
-              ),
-          ),
+          remindersInFile.map((d) => {
+            const reminder = new Reminder(
+              filePath,
+              d.title,
+              DateTime.parse(d.time),
+              d.rowNumber,
+              false,
+            );
+            reminder.muteNotification = d.muted ?? false;
+            return reminder;
+          }),
         );
       });
     }
@@ -93,16 +128,18 @@ export class PluginData {
         title: rr.title,
         time: rr.time.toString(),
         rowNumber: rr.rowNumber,
+        muted: rr.muteNotification,
       }));
     });
-    const settings = {};
+    const settings: Record<string, unknown> = {};
     this.settings.forEach((setting) => {
       setting.store(settings);
     });
-    await this.plugin.saveData({
+    await this.store.saveData({
       scanned: this.scanned.value,
       reminders: remindersData,
       debug: this.debug.value,
+      dndUntil: this.dndUntil.value?.getTimeInMillis() ?? null,
       settings,
     });
     this.changed = false;

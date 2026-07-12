@@ -6,7 +6,11 @@
   import { TimedInputHandler } from "./timed-input-handler";
 
   export let value: moment.Moment = moment();
-  const dispatch = createEventDispatcher();
+  const dispatch = createEventDispatcher<{
+    select: moment.Moment;
+    focus: null;
+    blur: null;
+  }>();
   const settings = new Settings();
   const weekStart = Number(settings.weekStart.value);
   $: calendar = new Calendar(
@@ -21,6 +25,11 @@
   );
   let table: HTMLElement;
   let slot: HTMLElement;
+  let calendarEl: HTMLElement;
+
+  export function focus() {
+    calendarEl.focus();
+  }
 
   function onClick(clicked: moment.Moment) {
     value = clicked;
@@ -112,6 +121,7 @@
   class="reminder-calendar"
   tabindex="0"
   role="grid"
+  bind:this={calendarEl}
   on:focus={() => {
     dispatch("focus");
   }}
@@ -133,15 +143,15 @@
   <table bind:this={table}>
     <thead>
       <tr>
-        {#each daysOfWeek as day}
+        {#each daysOfWeek as day (day)}
           <th>{day}</th>
         {/each}
       </tr>
     </thead>
     <tbody>
-      {#each calendar.current.weeks as week}
+      {#each calendar.current.weeks as week (week.key)}
         <tr>
-          {#each week.days as day}
+          {#each week.days as day (day.date.valueOf())}
             <td>
               <button
                 tabindex="-1"

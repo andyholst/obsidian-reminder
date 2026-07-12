@@ -33,7 +33,13 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
   describe("Overdue reminder modal", () => {
     test("Overdue: modal initializes with overdue date+time", () => {
       const overdueTime = DateTime.parse("2020-01-01 10:00");
-      const reminder = new Reminder("test.md", "Overdue task", overdueTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Overdue task",
+        overdueTime,
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
       expect(initialDate.format("YYYY-MM-DD")).toBe("2020-01-01");
@@ -42,7 +48,13 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
 
     test("Overdue: modal initializes with overdue date-only", () => {
       const overdueTime = DateTime.parse("2020-01-01");
-      const reminder = new Reminder("test.md", "Overdue task date-only", overdueTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Overdue task date-only",
+        overdueTime,
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
       expect(initialDate.format("YYYY-MM-DD")).toBe("2020-01-01");
@@ -51,7 +63,13 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
 
     test("Overdue: can select future date in modal", () => {
       const overdueTime = DateTime.parse("2020-01-01 10:00");
-      const reminder = new Reminder("test.md", "Overdue task", overdueTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Overdue task",
+        overdueTime,
+        0,
+        false,
+      );
 
       // Simulate user selecting a future date in the modal
       const selectedDate = moment().add(3, "days");
@@ -64,10 +82,18 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
 
     test("Overdue: can select custom time in modal", () => {
       const overdueTime = DateTime.parse("2020-01-01 10:00");
-      const reminder = new Reminder("test.md", "Overdue task", overdueTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Overdue task",
+        overdueTime,
+        0,
+        false,
+      );
 
       // Simulate user selecting date + specific time (14:30)
-      const selectedDate = moment().add(1, "days").set({ hour: 14, minute: 30 });
+      const selectedDate = moment()
+        .add(1, "days")
+        .set({ hour: 14, minute: 30 });
       const newTime = new DateTime(selectedDate, true);
       reminder.time = newTime;
 
@@ -84,33 +110,57 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
   describe("Same-day (today) reminder modal", () => {
     test("Today: modal initializes with today's date+time", () => {
       const todayTime = DateTime.now();
-      const reminder = new Reminder("test.md", "Today task", todayTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Today task",
+        todayTime,
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
-      expect(initialDate.format("YYYY-MM-DD")).toBe(moment().format("YYYY-MM-DD"));
+      expect(initialDate.format("YYYY-MM-DD")).toBe(
+        moment().format("YYYY-MM-DD"),
+      );
       expect(reminder.time.hasTimePart).toBe(true);
     });
 
     test("Today: modal initializes with today's date-only", () => {
       const todayTime = moment().format("YYYY-MM-DD");
-      const reminder = new Reminder("test.md", "Today task date-only", DateTime.parse(todayTime), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Today task date-only",
+        DateTime.parse(todayTime),
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
-      expect(initialDate.format("YYYY-MM-DD")).toBe(moment().format("YYYY-MM-DD"));
+      expect(initialDate.format("YYYY-MM-DD")).toBe(
+        moment().format("YYYY-MM-DD"),
+      );
       expect(reminder.time.hasTimePart).toBe(false);
     });
 
     test("Today: can reschedule to later today", () => {
-      const now = DateTime.now();
+      // Pin a base time early in the day so adding 3 hours can never roll
+      // past midnight. The previous version used DateTime.now() and flipped
+      // the expected date whenever the suite ran late in the evening
+      // (e.g. 22:00 + 3h = the next day), making the test flaky.
+      const base = moment().hour(9).minute(0).second(0).millisecond(0);
+      const now = new DateTime(base, true);
       const reminder = new Reminder("test.md", "Today task", now, 0, false);
 
-      // Simulate selecting 3 hours later today
-      const laterToday = moment().add(3, "hours");
+      const laterToday = base.clone().add(3, "hours");
       const newTime = new DateTime(laterToday, true);
       reminder.time = newTime;
 
-      expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(moment().format("YYYY-MM-DD"));
-      expect(reminder.time.getTimeInMillis()).toBeGreaterThan(now.getTimeInMillis());
+      expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
+        base.format("YYYY-MM-DD"),
+      );
+      expect(reminder.time.getTimeInMillis()).toBeGreaterThan(
+        now.getTimeInMillis(),
+      );
     });
 
     test("Today: can reschedule to tomorrow from modal", () => {
@@ -122,7 +172,7 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
       reminder.time = newTime;
 
       expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
-        moment().add(1, "days").format("YYYY-MM-DD")
+        moment().add(1, "days").format("YYYY-MM-DD"),
       );
     });
   });
@@ -134,36 +184,58 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
    */
   describe("Tomorrow reminder modal", () => {
     test("Tomorrow: modal initializes with tomorrow's date", () => {
-      const tomorrowTime = DateTime.parse(moment().add(1, "days").format("YYYY-MM-DD") + " 09:00");
-      const reminder = new Reminder("test.md", "Tomorrow task", tomorrowTime, 0, false);
+      const tomorrowTime = DateTime.parse(
+        moment().add(1, "days").format("YYYY-MM-DD") + " 09:00",
+      );
+      const reminder = new Reminder(
+        "test.md",
+        "Tomorrow task",
+        tomorrowTime,
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
-      expect(initialDate.format("YYYY-MM-DD")).toBe(moment().add(1, "days").format("YYYY-MM-DD"));
+      expect(initialDate.format("YYYY-MM-DD")).toBe(
+        moment().add(1, "days").format("YYYY-MM-DD"),
+      );
     });
 
     test("Tomorrow: can reschedule to next week from modal", () => {
       const tomorrowTime = moment().add(1, "days");
-      const reminder = new Reminder("test.md", "Tomorrow task", new DateTime(tomorrowTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Tomorrow task",
+        new DateTime(tomorrowTime, true),
+        0,
+        false,
+      );
 
       const nextWeek = moment().add(1, "weeks");
       const newTime = new DateTime(nextWeek, true);
       reminder.time = newTime;
 
       expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
-        moment().add(1, "weeks").format("YYYY-MM-DD")
+        moment().add(1, "weeks").format("YYYY-MM-DD"),
       );
     });
 
     test("Tomorrow: can reschedule to specific date weeks ahead", () => {
       const tomorrowTime = moment().add(1, "days");
-      const reminder = new Reminder("test.md", "Tomorrow task", new DateTime(tomorrowTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Tomorrow task",
+        new DateTime(tomorrowTime, true),
+        0,
+        false,
+      );
 
       const weeksAhead = moment().add(3, "weeks").set({ hour: 10, minute: 0 });
       const newTime = new DateTime(weeksAhead, true);
       reminder.time = newTime;
 
       expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
-        moment().add(3, "weeks").format("YYYY-MM-DD")
+        moment().add(3, "weeks").format("YYYY-MM-DD"),
       );
       expect(reminder.time.moment().hour()).toBe(10);
       expect(reminder.time.moment().minute()).toBe(0);
@@ -177,22 +249,36 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
   describe("Days ahead reminder modal", () => {
     test("Days ahead: modal initializes with future date", () => {
       const futureTime = moment().add(5, "days");
-      const reminder = new Reminder("test.md", "Future task", new DateTime(futureTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Future task",
+        new DateTime(futureTime, true),
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
-      expect(initialDate.format("YYYY-MM-DD")).toBe(moment().add(5, "days").format("YYYY-MM-DD"));
+      expect(initialDate.format("YYYY-MM-DD")).toBe(
+        moment().add(5, "days").format("YYYY-MM-DD"),
+      );
     });
 
     test("Days ahead: can reschedule to different day with specific time", () => {
       const futureTime = moment().add(5, "days");
-      const reminder = new Reminder("test.md", "Future task", new DateTime(futureTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Future task",
+        new DateTime(futureTime, true),
+        0,
+        false,
+      );
 
       const newDate = moment().add(10, "days").set({ hour: 15, minute: 30 });
       const newTime = new DateTime(newDate, true);
       reminder.time = newTime;
 
       expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
-        moment().add(10, "days").format("YYYY-MM-DD")
+        moment().add(10, "days").format("YYYY-MM-DD"),
       );
       expect(reminder.time.moment().hour()).toBe(15);
       expect(reminder.time.moment().minute()).toBe(30);
@@ -206,22 +292,36 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
   describe("Weeks ahead reminder modal", () => {
     test("Weeks ahead: modal initializes with weeks-ahead date", () => {
       const weeksTime = moment().add(3, "weeks");
-      const reminder = new Reminder("test.md", "Weeks ahead task", new DateTime(weeksTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Weeks ahead task",
+        new DateTime(weeksTime, true),
+        0,
+        false,
+      );
 
       const initialDate = reminder.time.moment();
-      expect(initialDate.format("YYYY-MM-DD")).toBe(moment().add(3, "weeks").format("YYYY-MM-DD"));
+      expect(initialDate.format("YYYY-MM-DD")).toBe(
+        moment().add(3, "weeks").format("YYYY-MM-DD"),
+      );
     });
 
     test("Weeks ahead: can reschedule to different week", () => {
       const weeksTime = moment().add(3, "weeks");
-      const reminder = new Reminder("test.md", "Weeks ahead task", new DateTime(weeksTime, true), 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Weeks ahead task",
+        new DateTime(weeksTime, true),
+        0,
+        false,
+      );
 
       const newWeek = moment().add(6, "weeks").set({ hour: 9, minute: 0 });
       const newTime = new DateTime(newWeek, true);
       reminder.time = newTime;
 
       expect(reminder.time.moment().format("YYYY-MM-DD")).toBe(
-        moment().add(6, "weeks").format("YYYY-MM-DD")
+        moment().add(6, "weeks").format("YYYY-MM-DD"),
       );
     });
   });
@@ -295,7 +395,13 @@ describe("RescheduleModal DateTimeChooser integration", (): void => {
 
     test("Cancel on overdue reminder preserves overdue time", () => {
       const overdueTime = DateTime.parse("2020-01-01 10:00");
-      const reminder = new Reminder("test.md", "Overdue task", overdueTime, 0, false);
+      const reminder = new Reminder(
+        "test.md",
+        "Overdue task",
+        overdueTime,
+        0,
+        false,
+      );
 
       // User opens modal and cancels
       expect(reminder.time.toString()).toBe("2020-01-01 10:00");
