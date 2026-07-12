@@ -1,10 +1,22 @@
 <script lang="typescript">
   import type { GroupedReminder, Reminder } from "model/reminder";
+  import type { DateTime } from "model/time";
   import ReminderListByDate from "./ReminderListByDate.svelte";
 
   export let groups: Array<GroupedReminder>;
   export let onOpenReminder: (reminder: Reminder) => void;
+  export let onReschedule: (
+    reminder: Reminder,
+    newTime: DateTime,
+  ) => void = () => {};
+  export let onShowRescheduleModal: (reminder: Reminder) => void = () => {};
+  export let onRescheduleContext: (
+    event: MouseEvent | TouchEvent,
+    reminder: Reminder,
+  ) => void = () => {};
   export let generateLink: (reminder: Reminder) => string;
+  // isMobile is passed from parent for future mobile-specific features
+  export let isMobile: boolean = false;
 </script>
 
 <main>
@@ -21,6 +33,8 @@
         {onOpenReminder}
         timeToString={(time) => group.timeToString(time)}
         {generateLink}
+        {onRescheduleContext}
+        isOverdue={group.isOverdue}
       />
     {/each}
   </div>

@@ -13,10 +13,10 @@ Prefer mise tasks (they just wrap npm scripts under the hood).
 | mise | Underlying command (npm script) | Purpose |
 | --- | --- | --- |
 | `mise run main:init` | `npm install` | Install dependencies |
-| `mise run main:build` | `npm run build` (`node esbuild.config.mjs production`) | Run a production-equivalent build once |
+| `mise run main:build` | `make build` (`dagger call build`) | Run build through Dagger CLI |
 | `mise run dev` | `npm run dev` (`node esbuild.config.mjs watch`) | Start a persistent development watch build |
-| `mise run main:test` | `npm run test` (`jest`) | Run the full test suite |
-| `mise run main:lint:fix` | `npm run lint:fix` | eslint --fix + tsc --noEmit + svelte-check |
+| `mise run main:test` | `make test` (`dagger call test`) | Run tests through Dagger CLI |
+| `mise run main:lint:fix` | `make lint` (`dagger call lint`) | Run ESLint through Dagger CLI + tsc --noEmit + svelte-check |
 | `mise run pre-commit` | `main:lint:fix` → `main:test` | Pre-commit checks |
 | `mise run docs` | `npm run dev` in `docs/` | Run the documentation site (VuePress) locally |
 
@@ -56,11 +56,9 @@ Automated tests only cover `src/model/`. After implementing a change that affect
 
 ## Release flow
 
-`release.sh` has been removed. Releases are done exclusively via `.github/workflows/release.yml` and `release-beta.yml`, both triggered manually via `workflow_dispatch`.
-
-- Official release: run `release.yml` on master with a `bump` input (`patch`/`minor`/`major`, default `patch`) instead of an explicit version — e.g. `gh workflow run release.yml` (defaults to patch) or `gh workflow run release.yml -f bump=minor`. The workflow runs the test suite, checks that manifest.json's and package.json's versions are in sync (fails with an error otherwise), computes the next version from manifest.json via `npm version <bump>` (which also bumps package.json/package-lock.json), and updates manifest.json (version) and versions.json (appends the new version, paired with manifest.json's `minAppVersion`) → builds → commits and tags the version bump on master → creates a GitHub Release with auto-generated release notes → then (after the release job succeeds) deploys the docs site to gh-pages.
-- Beta release: run `release-beta.yml` on the equivalent of the develop branch, still with a typed-in explicit version (e.g. `1.2.0-beta.1`) since beta versions don't map to a bump level → updates manifest-beta.json, pushes to develop, and tags it → automatically opens a PR from a branch that cherry-picks that change onto master (merging is manual) → creates a GitHub Release marked as prerelease. Because BRAT reads `manifest.json` from the release assets, the build step copies `manifest-beta.json` over `manifest.json` before packaging, so BRAT sees the beta version.
-- `versions.json` maps plugin versions to the minimum supported Obsidian version; `release.yml` appends the new version automatically using manifest.json's `minAppVersion`, so this file no longer needs manual upkeep.
+Releases are done manually via `npm version` and git tags, or with a dedicated
+release workflow if one exists. The current CI uses `make build/test/lint` which
+run through Dagger CLI.
 
 GitHub Release notes are auto-generated from PR labels according to `.github/release.yml`. Every PR should be labeled with one of `breaking-change`, `enhancement`, `bug`, `documentation`, or `chore` (Dependabot PRs get `dependencies` automatically). Unlabeled PRs fall into "Other Changes".
 

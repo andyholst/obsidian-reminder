@@ -42,7 +42,7 @@ const ctx = await esbuild.context({
     // minify: prod ? true : false,
     sourcemap: prod ? false : 'inline',
     treeShaking: true,
-    outfile: 'main.js',
+    outfile: 'dist/main.js',
     minify: prod,
     plugins: [
         esbuildSvelte({
@@ -63,7 +63,7 @@ const ctx = await esbuild.context({
                 build.onEnd(() => {
                     const { outfile } = build.initialOptions;
                     const outcss = outfile.replace(/\.js$/, ".css");
-                    const fixcss = outfile.replace(/main\.js$/, "styles.css");
+                    const fixcss = outcss.replace(/\/main\.css$/, "/styles.css");
                     if (fs.existsSync(outcss)) {
                         fs.renameSync(outcss, fixcss);
                     }

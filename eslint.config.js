@@ -86,7 +86,7 @@ const typeAwareConfig = {
 
 export default [
   {
-    ignores: ['main.js', 'docs/**/*', '.claude/**/*'],
+    ignores: ['main.js', 'dist/**', 'docs/**/*', '.claude/**/*'],
   },
   config,
   js.configs.recommended,

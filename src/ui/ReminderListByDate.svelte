@@ -7,9 +7,62 @@
   export let onOpenReminder: (reminder: Reminder) => void = () => {};
   export let timeToString = (time: DateTime) => time.format("HH:mm");
   export let generateLink: (reminder: Reminder) => string = () => "";
+  export let onRescheduleContext: (
+    event: MouseEvent | TouchEvent,
+    reminder: Reminder,
+  ) => void = () => {};
+  export let isOverdue: boolean = false;
 
-  function tooltip(reminder: Reminder): string {
-    return `[${reminder.time.toString()}] ${reminder.title} - ${reminder.getFileName()}`;
+  // Long-press detection for non-overdue reminders
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let longPressTriggered = false;
+  const LONG_PRESS_DURATION = 500; // ms
+
+  function handleTouchStart(e: TouchEvent, reminder: Reminder) {
+    if (isOverdue) return; // overdue uses regular click, no long-press needed
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      onRescheduleContext(e as unknown as TouchEvent, reminder);
+    }, LONG_PRESS_DURATION);
+  }
+
+  function handleTouchEnd() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  function handleTouchMove() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  function handleContextMenu(e: MouseEvent, reminder: Reminder) {
+    e.preventDefault();
+    e.stopPropagation();
+    onRescheduleContext(e, reminder);
+  }
+
+  function handleClick(e: MouseEvent, reminder: Reminder) {
+    if (longPressTriggered) {
+      longPressTriggered = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (isOverdue) {
+      // Overdue reminders: regular click opens reschedule menu
+      e.preventDefault();
+      e.stopPropagation();
+      onRescheduleContext(e, reminder);
+      return;
+    }
+    // Non-overdue reminders: regular click opens reminder modal (original behavior)
+    onOpenReminder(reminder);
   }
 </script>
 
@@ -21,15 +74,19 @@
       {#each reminders as reminder (reminder.key())}
         <button
           class="reminder-list-item hover-highlight"
-          aria-label={tooltip(reminder)}
-          title={tooltip(reminder)}
+          class:is-overdue={isOverdue}
+          aria-label={`[${reminder.time.toString()}] ${
+            reminder.title
+          } - ${reminder.getFileName()}`}
           draggable="true"
           on:dragstart={(e) => {
             e.dataTransfer?.setData("text/plain", generateLink(reminder));
           }}
-          on:click={() => {
-            onOpenReminder(reminder);
-          }}
+          on:click={(e) => handleClick(e, reminder)}
+          on:contextmenu={(e) => handleContextMenu(e, reminder)}
+          on:touchstart={(e) => handleTouchStart(e, reminder)}
+          on:touchend={() => handleTouchEnd()}
+          on:touchmove={() => handleTouchMove()}
         >
           <span class="reminder-time">
             {timeToString(reminder.time)}
@@ -55,6 +112,9 @@
     justify-content: flex-start;
     gap: 0.3rem;
     display: inline-flex;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .reminder-group {
@@ -69,6 +129,9 @@
   .reminder-list-item:hover {
     color: var(--text-normal);
     background-color: var(--background-modifier-hover);
+  }
+  .reminder-list-item.is-overdue {
+    color: var(--text-accent);
   }
   .reminder-time {
     display: inline-block;

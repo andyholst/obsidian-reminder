@@ -8,7 +8,7 @@
     "build": "node esbuild.config.mjs production",
     "lint": "eslint && tsc --noEmit --pretty && svelte-check",
     "lint:fix": "eslint --fix && tsc --noEmit --pretty && svelte-check",
-    "test": "jest"
+    "test": "jest --maxWorkers=1"
   },
   "keywords": [],
   "author": "uphy",
@@ -45,7 +45,10 @@
     "svelte-preprocess": "^6.0.5",
     "ts-jest": "^29.4.11",
     "tslib": "^2.8.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@codemirror/stream-parser": "https://github.com/lishid/stream-parser",
+    "@typescript-eslint/parser": "^8.63.0",
+    "prettier": "^3.9.5"
   },
   "dependencies": {
     "rrule": "^2.8.1",

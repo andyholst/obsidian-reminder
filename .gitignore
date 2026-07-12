@@ -6,6 +6,7 @@
 node_modules
 
 # build
+dist/
 main.js
 *.js.map
 styles.css
@@ -25,3 +26,5 @@ data.json
 .claude/hooks/.manual-verify-state
 .claude/hooks/.docs-update-state
 .claude/worktrees/
+# Local Dagger CLI (downloaded by make, not committed)
+bin/
